@@ -1,0 +1,13 @@
+{
+  "transactions": [
+    {
+      "rpc": "https://polygon-amoy-bor-rpc.publicnode.com"
+    },
+    {
+      "rpc": "https://polygon-amoy-bor-rpc.publicnode.com"
+    },
+    {
+      "rpc": "https://polygon-amoy-bor-rpc.publicnode.com"
+    }
+  ]
+}

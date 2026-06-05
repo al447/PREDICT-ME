@@ -1,0 +1,8 @@
+{
+  "lib/neg-risk-ctf-adapter": {
+    "tag": {
+      "name": "v2.0.0",
+      "rev": "2623282977b80c4d8ec3dfea3a5a179808265eb6"
+    }
+  }
+}

@@ -1,0 +1,111 @@
+specVersion: 0.0.4
+schema:
+  file: ./schema.graphql
+dataSources:
+  # MarketFactory - MarketCreated events
+  - kind: ethereum
+    name: MarketFactory
+    network: polygon-amoy
+    source:
+      address: "0x14f5b9db28c1af09726cf0ca327652303565ae0e"
+      abi: MarketFactory
+      startBlock: 39491000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.6
+      language: wasm/assemblyscript
+      entities:
+        - Market
+        - MarketCreatedEvent
+      abis:
+        - name: MarketFactory
+          file: ./abis/MarketFactory.json
+      eventHandlers:
+        - event: MarketCreated(indexed bytes32,indexed bytes32,uint256,uint256,address,bool,bytes)
+          handler: handleMarketCreated
+        - event: OwnershipTransferred(indexed address,indexed address)
+          handler: handleOwnershipTransferred
+      file: ./src/marketFactory.ts
+
+  # CTFExchange - OrdersMatched events
+  - kind: ethereum
+    name: CTFExchange
+    network: polygon-amoy
+    source:
+      address: "0x8CbA3487e88e19d5aA6A3C78Cc93d06Dc0801eBF"
+      abi: CTFExchange
+      startBlock: 39491000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.6
+      language: wasm/assemblyscript
+      entities:
+        - Trade
+        - OrderMatch
+      abis:
+        - name: CTFExchange
+          file: ./abis/CTFExchange.json
+      eventHandlers:
+        - event: OrdersMatched(indexed bytes32,indexed address,uint256,uint256,uint256,uint256)
+          handler: handleOrdersMatched
+      file: ./src/ctfExchange.ts
+
+  # ConditionalTokens - Position lifecycle events (split, merge, redeem)
+  - kind: ethereum
+    name: ConditionalTokens
+    network: polygon-amoy
+    source:
+      address: "0x688d809494D56aCD8ea8b252937e9b51F7F8111B"
+      abi: ConditionalTokens
+      startBlock: 39491000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.6
+      language: wasm/assemblyscript
+      entities:
+        - Condition
+        - Position
+        - PositionBalance
+        - Payout
+      abis:
+        - name: ConditionalTokens
+          file: ./abis/ConditionalTokens.json
+      eventHandlers:
+        - event: ConditionPreparation(indexed bytes32,indexed address,indexed bytes32,uint256)
+          handler: handleConditionPreparation
+        - event: PositionSplit(indexed address,address,indexed bytes32,indexed bytes32,uint256[],uint256)
+          handler: handlePositionSplit
+        - event: PositionsMerge(indexed address,address,indexed bytes32,indexed bytes32,uint256[],uint256)
+          handler: handlePositionsMerge
+        - event: PayoutRedemption(indexed address,indexed address,indexed bytes32,bytes32,uint256[],uint256)
+          handler: handlePayoutRedemption
+        - event: ConditionResolution(indexed bytes32,indexed address,indexed bytes32,uint256,uint256[])
+          handler: handleConditionResolution
+      file: ./src/conditionalTokens.ts
+
+  # UmaCtfAdapter - Resolution events
+  - kind: ethereum
+    name: UmaCtfAdapter
+    network: polygon-amoy
+    source:
+      address: "0xd414d992a493470b0bf833a2f4817b1b88a15b4b"
+      abi: UmaCtfAdapter
+      startBlock: 39491000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.6
+      language: wasm/assemblyscript
+      entities:
+        - Question
+        - Resolution
+      abis:
+        - name: UmaCtfAdapter
+          file: ./abis/UmaCtfAdapter.json
+        - name: OptimisticOracleV2
+          file: ./abis/OptimisticOracleV2.json
+      eventHandlers:
+        - event: QuestionInitialized(indexed bytes32,indexed uint256,indexed address,bytes,address,uint256,uint256)
+          handler: handleQuestionInitialized
+        - event: QuestionResolved(indexed bytes32,indexed int256,uint256[])
+          handler: handleQuestionResolved
+      file: ./src/umaCtfAdapter.ts

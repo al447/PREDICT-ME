@@ -1,0 +1,167 @@
+type Market @entity(immutable: false) {
+  id: ID! # conditionId
+  questionId: Bytes!
+  token0: BigInt! # YES token
+  token1: BigInt! # NO token
+  collateral: Bytes! # USDC address
+  negRisk: Boolean!
+  createdAt: BigInt!
+  createdAtBlock: BigInt!
+  createdAtTx: Bytes!
+  
+  # Relations
+  condition: Condition
+  trades: [Trade!]! @derivedFrom(field: "market")
+  positions: [Position!]! @derivedFrom(field: "market")
+  orders: [OrderMatch!]! @derivedFrom(field: "market")
+}
+
+type Condition @entity(immutable: false) {
+  id: ID! # conditionId
+  oracle: Bytes!
+  questionId: Bytes!
+  outcomeSlotCount: BigInt!
+  resolved: Boolean!
+  payoutNumerators: [BigInt!]
+  payoutDenominator: BigInt
+  resolutionTimestamp: BigInt
+  
+  # Relations
+  market: Market
+  positions: [Position!]! @derivedFrom(field: "condition")
+}
+
+type Question @entity(immutable: false) {
+  id: ID! # questionId
+  ancillaryData: Bytes!
+  rewardToken: Bytes!
+  reward: BigInt!
+  proposalBond: BigInt!
+  liveness: BigInt!
+  initializedAt: BigInt!
+  resolved: Boolean!
+  outcome: BigInt
+  resolvedAt: BigInt
+  
+  # Relations
+  conditionId: Bytes
+}
+
+type Trade @entity(immutable: true) {
+  id: ID! # tx hash + log index
+  market: Market!
+  conditionId: Bytes!
+  tokenId: BigInt!
+  maker: Bytes!
+  taker: Bytes!
+  makerAmount: BigInt!
+  takerAmount: BigInt!
+  price: BigDecimal! # Calculated from amounts
+  side: String! # 'buy' or 'sell'
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+}
+
+type OrderMatch @entity(immutable: true) {
+  id: ID! # tx hash + conditionId
+  market: Market!
+  conditionId: Bytes!
+  tokenId: BigInt!
+  maker: Bytes!
+  taker: Bytes!
+  makerAmount: BigInt!
+  takerAmount: BigInt!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+  logIndex: BigInt!
+}
+
+type Position @entity(immutable: false) {
+  id: ID! # tokenId
+  condition: Condition!
+  market: Market!
+  tokenId: BigInt!
+  outcomeIndex: Int! # 0 for YES, 1 for NO in binary markets
+  totalSupply: BigInt!
+  
+  # Relations
+  balances: [PositionBalance!]! @derivedFrom(field: "position")
+}
+
+type PositionBalance @entity(immutable: false) {
+  id: ID! # tokenId + user address
+  position: Position!
+  user: Bytes!
+  balance: BigInt!
+  
+  # Tracking
+  firstAcquiredAt: BigInt!
+  lastUpdatedAt: BigInt!
+}
+
+type Transfer @entity(immutable: true) {
+  id: ID! # tx hash + log index
+  tokenId: BigInt!
+  from: Bytes!
+  to: Bytes!
+  amount: BigInt!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+  
+  # Optional relations
+  position: Position
+}
+
+type Payout @entity(immutable: true) {
+  id: ID! # conditionId + redeemer
+  condition: Condition!
+  redeemer: Bytes!
+  payout: BigInt!
+  redeemedAt: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+}
+
+type Resolution @entity(immutable: true) {
+  id: ID! # questionId
+  question: Question!
+  outcome: BigInt! # 0 = NO, 1 = YES for binary
+  resolvedAt: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+}
+
+type User @entity(immutable: false) {
+  id: ID! # wallet address
+  address: Bytes!
+  
+  # Trading stats
+  totalTrades: BigInt!
+  totalVolume: BigInt! # In USDC
+  totalProfits: BigInt!
+  totalLosses: BigInt!
+}
+
+type MarketCreatedEvent @entity(immutable: true) {
+  id: ID! # tx hash
+  conditionId: Bytes!
+  questionId: Bytes!
+  token0: BigInt!
+  token1: BigInt!
+  collateral: Bytes!
+  negRisk: Boolean!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+}
+
+type GlobalStats @entity(immutable: false) {
+  id: ID! # "global"
+  totalMarkets: BigInt!
+  totalTrades: BigInt!
+  totalVolume: BigInt!
+  totalValueLocked: BigInt!
+  lastUpdatedAt: BigInt!
+}

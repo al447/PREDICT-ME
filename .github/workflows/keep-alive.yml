@@ -1,0 +1,33 @@
+name: Keep Backend Warm
+
+# Pings the Render backend's health endpoint on a schedule so the free-tier
+# instance never spins down. Render free web services sleep after ~15 min of
+# inactivity and take 50s-3min to cold-start; this prevents that.
+
+on:
+  schedule:
+    # Every 10 minutes. GitHub cron is best-effort and may be delayed a few
+    # minutes under load, which is still well within Render's ~15 min idle window.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health endpoint
+        run: |
+          URL="https://polybet365-api-live.onrender.com/api/health"
+          echo "Pinging $URL"
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$URL" || echo "000")
+            echo "Attempt $i -> HTTP $code"
+            if [ "$code" = "200" ]; then
+              echo "Backend is awake."
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "Backend did not return 200 after retries (it may be cold-starting)."
+          # Do not fail the workflow — the ping itself triggers the wake-up.
+          exit 0

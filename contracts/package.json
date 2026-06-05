@@ -1,0 +1,18 @@
+{
+  "name": "polybet365-contracts",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "coverage": "hardhat coverage",
+    "deploy:amoy": "hardhat run scripts/deploy.js --network amoy"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.22.5"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.2"
+  }
+}
