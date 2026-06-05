@@ -172,10 +172,29 @@ async function getBridgeQuote({ user, fromChainId, fromToken, fromAmount }) {
   } catch (err) {
     // Try fallback provider if primary fails
     console.warn(`[Bridge] ${provider} quote failed, trying fallback:`, err.message);
-    if (provider === 'relay') {
-      return await getLifiQuote({ fromChainId, fromToken, fromAmount, recipientAddress });
-    } else {
-      return await getRelayQuote({ fromChainId, fromToken, fromAmount, recipientAddress });
+    try {
+      if (provider === 'relay') {
+        return await getLifiQuote({ fromChainId, fromToken, fromAmount, recipientAddress });
+      } else {
+        return await getRelayQuote({ fromChainId, fromToken, fromAmount, recipientAddress });
+      }
+    } catch (fallbackErr) {
+      // Both providers failed — return a direct-send fallback so the UI can still show the deposit address
+      console.warn(`[Bridge] Both providers failed, returning direct fallback. LI.FI error: ${fallbackErr.message}`);
+      return {
+        routeId:         null,
+        depositAddress:  recipientAddress,
+        callData:        null,
+        estimatedOutput: null,
+        estimatedFee:    '0',
+        estimatedTime:   null,
+        fromChainId,
+        fromToken,
+        fromAmount,
+        recipient:       recipientAddress,
+        provider:        'direct',
+        fallback:        true,
+      };
     }
   }
 }

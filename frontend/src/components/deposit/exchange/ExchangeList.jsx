@@ -52,16 +52,6 @@ const ExchangeList = ({ onSelect, balanceDisplay = '$0.00' }) => {
 
   return (
     <div className="space-y-3">
-      {/* Header */}
-      <div className="text-center mb-4">
-        <h3 className="text-base font-semibold text-[var(--color-text)]">
-          Select an exchange
-        </h3>
-        <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-          PolyBet365 Balance: {balanceDisplay}
-        </p>
-      </div>
-
       {/* Exchange list */}
       <div className="space-y-2">
         {EXCHANGES.map((exchange) => (

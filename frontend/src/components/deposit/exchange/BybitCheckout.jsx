@@ -2,26 +2,27 @@ import { QRCodeSVG } from 'qrcode.react';
 import { Info, ChevronDown } from 'lucide-react';
 import { useState } from 'react';
 
-const BybitCheckout = ({ amount, checkoutUrl, onContinueInBrowser, onBack }) => {
+const BybitCheckout = ({ amount, checkoutUrl, depositAddress, onContinueInBrowser, onBack }) => {
   const [showBreakdown, setShowBreakdown] = useState(false);
 
-  // Parse fee from URL or use default
   const fee = amount * 0.007; // 0.7% fee (typical)
   const total = amount + fee;
 
+  // Use the real depositAddress QR when no Fun.xyz checkoutUrl is available
+  const qrValue = checkoutUrl || depositAddress || 'https://bybit.com';
+
+  const handleContinueInBrowser = () => {
+    if (checkoutUrl) {
+      window.open(checkoutUrl, 'BybitConnect', 'width=600,height=800');
+    } else if (onContinueInBrowser) {
+      onContinueInBrowser();
+    } else {
+      window.open('https://www.bybit.com/user/assets/withdraw', '_blank', 'noopener,noreferrer');
+    }
+  };
+
   return (
     <div className="space-y-4">
-      {/* Back button */}
-      <button
-        onClick={onBack}
-        className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
-      >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-        </svg>
-        Back
-      </button>
-
       {/* Title */}
       <div className="text-center">
         <h3 className="text-base font-semibold text-[var(--color-text)]">
@@ -83,7 +84,7 @@ const BybitCheckout = ({ amount, checkoutUrl, onContinueInBrowser, onBack }) => 
       <div className="flex flex-col items-center py-4">
         <div className="p-4 bg-white rounded-xl">
           <QRCodeSVG
-            value={checkoutUrl || 'https://bybit.com'}
+            value={qrValue}
             size={200}
             bgColor="#ffffff"
             fgColor="#000000"
@@ -107,7 +108,7 @@ const BybitCheckout = ({ amount, checkoutUrl, onContinueInBrowser, onBack }) => 
 
       {/* Continue in browser */}
       <button
-        onClick={onContinueInBrowser}
+        onClick={handleContinueInBrowser}
         className="w-full py-3 rounded-xl bg-[#6000EA] text-white font-semibold hover:bg-[#5000c8] transition-colors"
       >
         Continue in browser

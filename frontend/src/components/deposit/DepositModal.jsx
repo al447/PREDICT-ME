@@ -358,7 +358,6 @@ const DepositModal = () => {
                   onClick={() => {
                     if (view === 'transfer') {
                       setView('main');
-                      setShowReceipt(false);
                     } else if (view === 'cash-amount') {
                       setView('main');
                       setCashMethod(null);
@@ -801,32 +800,15 @@ const DepositModal = () => {
                 >
                   <CoinbaseIntro
                     onBack={() => setView('exchange-list')}
-                    onContinue={async () => {
-                      setIsLoading(true);
-                      try {
-                        const { data } = await depositAPI.createExchangeSession({
-                          provider: 'coinbase',
-                          amount: 0, // Amount set later in Coinbase flow
-                          currency: 'USDC',
-                          network: 'polygon'
-                        });
-                        if (data.success && data.checkoutUrl) {
-                          setExchangeSessionId(data.sessionId);
-                          setExchangeCheckoutUrl(data.checkoutUrl);
-                          // Open popup synchronously for user to complete on Coinbase
-                          const popup = window.open(data.checkoutUrl, 'CoinbaseConnect', 'width=500,height=700');
-                          if (!popup) {
-                            toast.error('Please allow popups to connect Coinbase');
-                          }
-                        } else {
-                          toast.error(data.error || 'Failed to create Coinbase session');
-                        }
-                      } catch (err) {
-                        console.error('Coinbase session error:', err);
-                        toast.error(err.response?.data?.error || 'Failed to connect Coinbase. Please try again.');
-                      } finally {
-                        setIsLoading(false);
-                      }
+                    onContinue={() => {
+                      const w = 500, h = 700;
+                      const left = Math.round(window.screenX + (window.outerWidth - w) / 2);
+                      const top = Math.round(window.screenY + (window.outerHeight - h) / 2);
+                      window.open(
+                        'https://login.coinbase.com/signin',
+                        'CoinbaseConnect',
+                        `width=${w},height=${h},left=${left},top=${top},toolbar=no,menubar=no,scrollbars=yes,resizable=yes`
+                      );
                     }}
                   />
                 </motion.div>
@@ -843,29 +825,9 @@ const DepositModal = () => {
                 >
                   <BybitAmount
                     onBack={() => setView('exchange-list')}
-                    onContinue={async (amount) => {
-                      setIsLoading(true);
-                      try {
-                        const { data } = await depositAPI.createExchangeSession({
-                          provider: 'bybit',
-                          amount,
-                          currency: 'USDC',
-                          network: 'polygon'
-                        });
-                        if (data.success && data.checkoutUrl) {
-                          setExchangeAmount(amount);
-                          setExchangeSessionId(data.sessionId);
-                          setExchangeCheckoutUrl(data.checkoutUrl);
-                          setView('exchange-bybit-checkout');
-                        } else {
-                          toast.error(data.error || 'Failed to create Bybit session');
-                        }
-                      } catch (err) {
-                        console.error('Bybit session error:', err);
-                        toast.error(err.response?.data?.error || 'Failed to connect Bybit. Please try again.');
-                      } finally {
-                        setIsLoading(false);
-                      }
+                    onContinue={(amount) => {
+                      setExchangeAmount(amount);
+                      setView('exchange-bybit-checkout');
                     }}
                   />
                 </motion.div>
@@ -883,14 +845,11 @@ const DepositModal = () => {
                   <BybitCheckout
                     amount={exchangeAmount}
                     checkoutUrl={exchangeCheckoutUrl}
+                    depositAddress={depositAddress}
                     onBack={() => setView('exchange-bybit-amount')}
-                    onContinueInBrowser={() => {
-                      if (exchangeCheckoutUrl) {
-                        window.open(exchangeCheckoutUrl, 'BybitConnect', 'width=600,height=800');
-                      } else {
-                        toast.error('Checkout URL not available. Please try again.');
-                      }
-                    }}
+                    onContinueInBrowser={() =>
+                      window.open('https://www.bybit.com/user/assets/withdraw', '_blank', 'noopener,noreferrer')
+                    }
                   />
                 </motion.div>
               )}

@@ -33,17 +33,6 @@ const BybitAmount = ({ onContinue, onBack }) => {
 
   return (
     <div className="space-y-4">
-      {/* Back button */}
-      <button
-        onClick={onBack}
-        className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
-      >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-        </svg>
-        Back
-      </button>
-
       {/* Title */}
       <div className="text-center">
         <h3 className="text-base font-semibold text-[var(--color-text)]">

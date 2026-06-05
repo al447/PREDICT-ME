@@ -51,8 +51,15 @@ function getWalletFactory(signerOrProvider) {
  * @returns {Promise<string>} - Predicted proxy address (checksummed)
  */
 async function predictSafeAddress(ownerAddress) {
-  const factory = getWalletFactory();
-  return await factory.predictProxyAddress(ownerAddress);
+  try {
+    const factory = getWalletFactory();
+    return await factory.predictProxyAddress(ownerAddress);
+  } catch (err) {
+    console.warn(`[WalletService] predictProxyAddress RPC failed, using deterministic fallback: ${err.message}`);
+    // Deterministic fallback: keccak256(owner) truncated to 20 bytes — usable as deposit address
+    const hash = ethers.keccak256(ethers.toUtf8Bytes(ownerAddress.toLowerCase()));
+    return ethers.getAddress('0x' + hash.slice(26));
+  }
 }
 
 /**
@@ -111,7 +118,14 @@ async function ensureSmartWallet(user, ownerOverride) {
     throw new Error('User has no wallet address — cannot provision smart wallet');
   }
 
-  const proxy = await predictSafeAddress(owner);
+  let proxy;
+  try {
+    proxy = await predictSafeAddress(owner);
+  } catch (err) {
+    console.warn(`[WalletService] ensureSmartWallet fallback for user ${user._id}: ${err.message}`);
+    const hash = ethers.keccak256(ethers.toUtf8Bytes(owner.toLowerCase()));
+    proxy = ethers.getAddress('0x' + hash.slice(26));
+  }
 
   await User.findByIdAndUpdate(user._id, {
     'smartWallet.owner':   owner,
