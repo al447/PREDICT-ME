@@ -12,6 +12,7 @@ const Fill = require('../models/Fill');
 const Trade = require('../models/Trade');
 const User = require('../models/User');
 const { protect: authenticate } = require('../middleware/auth');
+const { adminAuth } = require('../middleware/adminAuth');
 
 // Validation helper
 const handleValidation = (req, res, next) => {

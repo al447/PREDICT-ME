@@ -1,4 +1,4 @@
-# PolyBet365
+# PredictMe
 
 A Polymarket-style prediction market platform.
 
