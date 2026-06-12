@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const Market = require('./src/models/Market');
 
-mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://predictme:predictme123@ac-7qbh8ax-shard-00-00.caozlq5.mongodb.net/predictme?retryWrites=true&w=majority')
+mongoose.connect(process.env.MONGODB_URI)
 .then(async () => {
   const total = await Market.countDocuments();
   const onChain = await Market.countDocuments({ onChain: true });
