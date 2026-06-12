@@ -23,6 +23,8 @@ const bridgeWithdrawalSchema = new mongoose.Schema(
       index: true,
     },
     provider:       { type: String, default: null },
+    safeDebitTxHash:{ type: String, default: null, lowercase: true }, // proxy→operator debit (user-signed)
+    refundTxHash:   { type: String, default: null, lowercase: true }, // operator→proxy refund on failure
     txHash:         { type: String, default: null, lowercase: true },
     estimatedOutput:{ type: Number, default: null },          // estimated destination amount
     actualOutput:   { type: Number, default: null },

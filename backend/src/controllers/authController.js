@@ -18,6 +18,7 @@ const { verifyWalletSignature } = require('../utils/walletAuth');
 const { generateUniqueCode, attributeReferral, getCodeForUser } = require('../services/referralService');
 const walletService = require('../services/walletService');
 const balanceSyncService = require('../services/balanceSyncService');
+const notificationService = require('../services/notificationService');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -89,6 +90,11 @@ const googleAuth = async (req, res, next) => {
       walletService.ensureSmartWallet(freshUser).then(wallet => {
         balanceSyncService.syncUser(freshUser).catch(() => {});
       }).catch(() => {});
+    }
+
+    // Welcome notification for new Google users
+    if (isNewUser) {
+      notificationService.welcomeNotification(user._id, user.username).catch(() => {});
     }
 
     res.json({
@@ -218,6 +224,11 @@ const walletAuth = async (req, res, next) => {
       }).catch(() => {});
     }
 
+    // Welcome notification for new wallet users
+    if (isNewUser) {
+      notificationService.welcomeNotification(user._id, user.username).catch(() => {});
+    }
+
     res.json({
       success: true,
       isNewUser,
@@ -277,7 +288,11 @@ const magicAuth = async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'Magic returned no identifiable account' });
     }
 
+    // Look up user by email first, then by wallet address for email-less accounts (e.g. Telegram)
     let user = email ? await User.findOne({ email }) : null;
+    if (!user && publicAddress) {
+      user = await User.findOne({ walletAddress: publicAddress });
+    }
     const isNewUser = !user;
     let referralResult = null;
 
@@ -324,6 +339,11 @@ const magicAuth = async (req, res, next) => {
       }).catch(() => {});
     }
 
+    // Welcome notification for new Magic users
+    if (isNewUser) {
+      notificationService.welcomeNotification(user._id, user.username).catch(() => {});
+    }
+
     res.json({
       success: true,
       isNewUser,
@@ -367,6 +387,7 @@ const getMe = async (req, res, next) => {
         favorites: user.favorites,
         createdAt: user.createdAt,
         referralCode: user.referralCode,
+        smartWallet: user.smartWallet,
       },
     });
   } catch (error) {

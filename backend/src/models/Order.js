@@ -27,8 +27,12 @@ const orderSchema = new mongoose.Schema(
     price: { type: Number, required: true, min: 0.01, max: 0.99 },
     
     // Quantity
-    size: { type: Number, required: true, min: 1 }, // Number of shares
+    size: { type: Number, required: true, min: 0.01 }, // Number of shares
     remainingSize: { type: Number, required: true, min: 0 }, // Unfilled shares
+    
+    // Original signed amounts (preserved for on-chain settlement struct reconstruction)
+    originalMakerAmount: { type: String, default: null },
+    originalTakerAmount: { type: String, default: null },
     
     // Expiration
     expiration: { type: Date, required: true },

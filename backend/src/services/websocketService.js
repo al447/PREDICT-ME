@@ -15,6 +15,9 @@ const subscribers = new Map();
 // All connected clients
 const clients = new Set();
 
+// Authenticated clients map: userId -> Set of WebSockets
+const userClients = new Map();
+
 // ── Crypto price fan-out ──────────────────────────────────────────────────────
 // symbol -> Set of WebSocket clients subscribed to that symbol's price stream
 const priceSubscribers = new Map();
@@ -75,10 +78,43 @@ function initWebSocketServer(server) {
   wss.on('connection', (ws, req) => {
     console.log('[WS] New client connected');
     clients.add(ws);
+
+    // Authenticate via token query param for user-specific notifications
+    const url = new URL(req.url, 'http://localhost');
+    const token = url.searchParams.get('token');
+    if (token) {
+      try {
+        const jwt = require('jsonwebtoken');
+        const secret = process.env.JWT_SECRET || 'your-secret-key';
+        const decoded = jwt.verify(token, secret);
+        const userId = decoded.userId || decoded.id;
+        if (userId) {
+          ws._userId = userId;
+          if (!userClients.has(userId)) userClients.set(userId, new Set());
+          userClients.get(userId).add(ws);
+        }
+      } catch {}
+    }
     
     ws.on('message', async (data) => {
       try {
         const message = JSON.parse(data);
+        // Handle auth message for clients that connect without token param
+        if (message.type === 'auth' && message.token) {
+          try {
+            const jwt = require('jsonwebtoken');
+            const secret = process.env.JWT_SECRET || 'your-secret-key';
+            const decoded = jwt.verify(message.token, secret);
+            const userId = decoded.userId || decoded.id;
+            if (userId) {
+              ws._userId = userId;
+              if (!userClients.has(userId)) userClients.set(userId, new Set());
+              userClients.get(userId).add(ws);
+              ws.send(JSON.stringify({ type: 'authenticated', userId }));
+            }
+          } catch { ws.send(JSON.stringify({ type: 'auth_error' })); }
+          return;
+        }
         await handleMessage(ws, message);
       } catch (err) {
         console.error('[WS] Message error:', err);
@@ -89,6 +125,11 @@ function initWebSocketServer(server) {
     ws.on('close', () => {
       console.log('[WS] Client disconnected');
       clients.delete(ws);
+      // Clean up user-specific subscription
+      if (ws._userId && userClients.has(ws._userId)) {
+        userClients.get(ws._userId).delete(ws);
+        if (userClients.get(ws._userId).size === 0) userClients.delete(ws._userId);
+      }
       unsubscribeFromAll(ws);
       unsubscribeFromAllPriceStreams(ws);
     });
@@ -277,11 +318,28 @@ function broadcastToAll(message) {
 }
 
 /**
+ * Send a message to a specific user by their userId.
+ * Used by notification service for real-time push.
+ */
+function sendToUser(userId, message) {
+  const sockets = userClients.get(userId);
+  if (!sockets || sockets.size === 0) return;
+  
+  const data = JSON.stringify(message);
+  for (const ws of sockets) {
+    if (ws.readyState === ws.OPEN) {
+      ws.send(data);
+    }
+  }
+}
+
+/**
  * Get WebSocket stats
  */
 function getStats() {
   return {
     totalClients: clients.size,
+    authenticatedUsers: userClients.size,
     activeSubscriptions: Array.from(subscribers.entries()).map(([key, set]) => ({
       market: key,
       subscribers: set.size,
@@ -294,5 +352,6 @@ module.exports = {
   broadcastOrderBookUpdate,
   broadcastTrade,
   broadcastToAll,
+  sendToUser,
   getStats,
 };

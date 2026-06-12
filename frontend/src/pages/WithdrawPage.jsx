@@ -4,9 +4,36 @@ import { ethers } from 'ethers';
 import { ArrowRight, ArrowDownRight, Check, Loader2, Shield, Wallet, ExternalLink, Banknote } from 'lucide-react';
 import Layout from '../components/layout/Layout';
 import useAuthStore from '../store/authStore';
-import { usersAPI, depositAPI, bridgeAPI } from '../services/api';
+import { usersAPI, depositAPI, bridgeAPI, onchainAPI } from '../services/api';
+import { getMagic } from '../lib/magic';
 import toast from 'react-hot-toast';
 import { formatBalance, truncateAddress } from '../utils/format';
+
+/**
+ * Resolve the best available EIP-712 signer (Magic first, then injected wallet).
+ * Mirrors useWithdraw — used to sign the Safe authorization that debits the
+ * user's proxy (proxy → operator) before the operator bridges cross-chain.
+ */
+async function getEthersSigner() {
+  try {
+    const magic = await getMagic();
+    if (magic && magic.rpcProvider) {
+      const isLoggedIn = await magic.user.isLoggedIn();
+      if (isLoggedIn) {
+        const bp = new ethers.BrowserProvider(magic.rpcProvider);
+        return bp.getSigner();
+      }
+    }
+  } catch { /* not Magic */ }
+
+  if (window.ethereum) {
+    const bp = new ethers.BrowserProvider(window.ethereum);
+    await bp.send('eth_requestAccounts', []);
+    return bp.getSigner();
+  }
+
+  throw new Error('No wallet signer found. Please connect a wallet.');
+}
 
 // Withdrawals run on Polygon Amoy with MockUSDC (6 decimals) — read the on-chain
 // wallet balance from the same network/token the platform actually sends.
@@ -77,6 +104,27 @@ const WithdrawPage = () => {
     if (!recipientAddr) { toast.error('Enter a recipient address'); return; }
     setStep('processing');
     try {
+      // ── Step 1: Resolve the operator wallet the Safe is debited to ──────────
+      toast.loading('Preparing withdrawal…', { id: 'bw' });
+      const { data: assets } = await bridgeAPI.getSupportedAssets();
+      const debitAddress = assets?.withdrawDebitAddress;
+      if (!debitAddress) {
+        throw new Error('Withdrawals are temporarily unavailable (operator not configured).');
+      }
+
+      // ── Step 2: Get EIP-712 SafeTx payload to move USDC proxy → operator ────
+      const { data: prep } = await onchainAPI.prepareWithdrawal({
+        recipient: debitAddress,
+        amount:    amt,
+      });
+      if (!prep.success) throw new Error(prep.error || 'Failed to prepare withdrawal');
+
+      // ── Step 3: User signs the Safe authorization (debits their own wallet) ─
+      toast.loading('Awaiting signature…', { id: 'bw' });
+      const signer = await getEthersSigner();
+      const userSignature = await signer.signTypedData(prep.domain, prep.types, prep.message);
+
+      // ── Step 4: Submit — backend debits the Safe, then the operator bridges ─
       toast.loading('Submitting withdrawal…', { id: 'bw' });
       const { data } = await bridgeAPI.withdraw({
         fromAmountUsdc: amt,
@@ -84,11 +132,13 @@ const WithdrawPage = () => {
         toChainId:      destChainId,
         toToken:        destToken,
         recipientAddr,
+        userSignature,
       });
       toast.dismiss('bw');
       if (data.success) {
         setWithdrawalId(data.withdrawalId);
-        updateBalance(user.balance - amt);
+        // Balance is chain-mirrored; the Safe debit is reflected by balanceSyncService.
+        await refreshBalance();
         setStep('success');
         toast.success('Withdrawal submitted!');
       } else {
@@ -97,7 +147,7 @@ const WithdrawPage = () => {
       }
     } catch (err) {
       toast.dismiss('bw');
-      toast.error(err.response?.data?.error || 'Withdrawal failed');
+      toast.error(err?.response?.data?.error || err.message || 'Withdrawal failed');
       setStep('input');
     }
   };

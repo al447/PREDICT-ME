@@ -5,6 +5,7 @@ import useThemeStore from './store/themeStore';
 import useAuthStore from './store/authStore';
 import useFavoritesStore from './store/favoritesStore';
 import useDepositModalStore from './store/depositModalStore';
+import useNotificationStore from './store/notificationStore';
 import { captureReferralCode } from './lib/referralCapture';
 import useMagic from './hooks/useMagic';
 import PageSpinner from './components/common/PageSpinner';
@@ -24,6 +25,8 @@ const PortfolioPage = lazy(() => import('./pages/PortfolioPage'));
 const ReferralPage = lazy(() => import('./pages/ReferralPage'));
 const WithdrawPage = lazy(() => import('./pages/WithdrawPage'));
 const ActivityPage = lazy(() => import('./pages/ActivityPage'));
+const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
+const TermsPage = lazy(() => import('./pages/TermsPage'));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 
 // Admin pages (lazy)
@@ -53,6 +56,7 @@ function App() {
   const { fetchFavorites } = useFavoritesStore();
   const { isOpen: isDepositOpen } = useDepositModalStore();
   const { handleOAuthRedirect } = useMagic();
+  const { fetchUnreadCount, addNotification } = useNotificationStore();
 
   // Capture referral code from URL on app load (before anything else)
   useEffect(() => {
@@ -79,7 +83,40 @@ function App() {
     if (user) {
       fetchMe();
       fetchFavorites();
+      fetchUnreadCount();
     }
+  }, [user?.id]);
+
+  // WebSocket listener for real-time notifications
+  useEffect(() => {
+    if (!user) return;
+    const wsUrl = (import.meta.env.VITE_WS_URL || 'ws://localhost:5000').replace(/^http/, 'ws');
+    let ws;
+    let reconnectTimer;
+
+    const connect = () => {
+      try {
+        const token = localStorage.getItem('pb365_token');
+        ws = new WebSocket(`${wsUrl}?token=${token}`);
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'notification') {
+              addNotification(msg.payload);
+            }
+          } catch {}
+        };
+        ws.onclose = () => {
+          reconnectTimer = setTimeout(connect, 5000);
+        };
+      } catch {}
+    };
+    connect();
+
+    return () => {
+      clearTimeout(reconnectTimer);
+      ws?.close();
+    };
   }, [user?.id]);
 
   // Auto-logout if MetaMask account changes
@@ -146,6 +183,8 @@ function App() {
         <Route path="/referral" element={<ReferralPage />} />
         <Route path="/withdraw" element={<WithdrawPage />} />
         <Route path="/activity" element={<ActivityPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/terms" element={<TermsPage />} />
 
         {/* Admin routes */}
         <Route path="/admin/login" element={<AdminLoginPage />} />

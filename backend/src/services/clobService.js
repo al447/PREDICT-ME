@@ -5,6 +5,7 @@
  */
 
 const { ethers } = require('ethers');
+const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const Fill = require('../models/Fill');
 const Trade = require('../models/Trade');
@@ -12,6 +13,8 @@ const Market = require('../models/Market');
 const { resolveAddressToUser } = require('./addressResolverService');
 const websocketService = require('./websocketService');
 const clobPriceService = require('./clobPriceService');
+const balanceSyncService = require('./balanceSyncService');
+const notificationService = require('./notificationService');
 const { ADDRESSES, ABIS, RPC_URL, CHAIN_ID, getOperatorKey } = require('../config/contracts');
 
 // EIP-712 Domain — MUST match the deployed CTFExchange.domainSeparator().
@@ -106,7 +109,17 @@ async function createOrder(orderData) {
   // Resolve tokenId — accept either tokenId (new) or makerTokenId (legacy)
   const resolvedTokenId = (orderData.tokenId || orderData.makerTokenId || '').toString();
 
-  // Create order in database
+  // Determine side as numeric for amount interpretation
+  const sideNum = typeof orderData.side === 'number' ? orderData.side : (orderData.side === 'buy' ? 0 : 1);
+  const sideStr = sideNum === 0 ? 'buy' : 'sell';
+
+  // For BUY: makerAmount = USDC offered, takerAmount = shares wanted → size = takerAmount (shares)
+  // For SELL: makerAmount = shares offered, takerAmount = USDC wanted → size = makerAmount (shares)
+  const sharesAmount = sideNum === 0
+    ? parseFloat(ethers.formatUnits(orderData.takerAmount, 6))
+    : parseFloat(ethers.formatUnits(orderData.makerAmount, 6));
+
+  // Create order in database — store original signed amounts for on-chain settlement
   const order = new Order({
     orderId:       Order.generateOrderId(),
     conditionId:   orderData.conditionId,
@@ -114,10 +127,12 @@ async function createOrder(orderData) {
     maker:         orderData.maker.toLowerCase(),
     signer:        (orderData.signer || orderData.maker).toLowerCase(),
     salt:          orderData.salt || orderData.nonce || 0,
-    side:          orderData.side === 0 || orderData.side === 'buy' ? 'buy' : 'sell',
-    price:         calculatePrice(orderData.makerAmount, orderData.takerAmount, typeof orderData.side === 'number' ? orderData.side : (orderData.side === 'buy' ? 0 : 1)),
-    size:          parseFloat(ethers.formatUnits(orderData.makerAmount, 6)),
-    remainingSize: parseFloat(ethers.formatUnits(orderData.makerAmount, 6)),
+    side:          sideStr,
+    price:         calculatePrice(orderData.makerAmount, orderData.takerAmount, sideNum),
+    size:          sharesAmount,
+    remainingSize: sharesAmount,
+    originalMakerAmount: orderData.makerAmount.toString(),
+    originalTakerAmount: orderData.takerAmount.toString(),
     expiration:    new Date(orderData.expiration * 1000),
     signature:     orderData.signature,
     nonce:         orderData.nonce,
@@ -159,16 +174,11 @@ function calculatePrice(makerAmount, takerAmount, side) {
 }
 
 /**
- * Try to match an order against the order book
+ * Try to match an order against the order book.
+ * Uses MongoDB sessions so fills can be rolled back if on-chain settlement fails.
  */
 async function tryMatchOrders(newOrder) {
-  const matches = [];
-  
-  // Find opposite side orders
   const oppositeSide = newOrder.side === 'buy' ? 'sell' : 'buy';
-  
-  // For buy orders, we want sell orders at or below our price
-  // For sell orders, we want buy orders at or above our price
   const priceQuery = newOrder.side === 'buy'
     ? { $lte: newOrder.price }
     : { $gte: newOrder.price };
@@ -179,51 +189,97 @@ async function tryMatchOrders(newOrder) {
     status: { $in: ['open', 'partially_filled'] },
     side: oppositeSide,
     price: priceQuery,
-    maker: { $ne: newOrder.maker }, // Can't match with self
+    maker: { $ne: newOrder.maker },
     expiration: { $gt: new Date() },
-  }).sort({ price: newOrder.side === 'buy' ? 1 : -1, createdAt: 1 }); // Best price first
+  }).sort({ price: newOrder.side === 'buy' ? 1 : -1, createdAt: 1 });
   
+  if (candidates.length === 0) return [];
+
+  const matches = [];
   let remainingToFill = newOrder.remainingSize;
-  
-  for (const candidate of candidates) {
-    if (remainingToFill <= 0) break;
-    
-    const matchSize = Math.min(remainingToFill, candidate.remainingSize);
-    
-    matches.push({
-      conditionId:  newOrder.conditionId,  // Bug fix: was missing
-      maker:        candidate.maker,
-      taker:        newOrder.maker,
-      makerOrderId: candidate.orderId,
-      takerOrderId: newOrder.orderId,
-      makerTokenId: candidate.tokenId,
-      takerTokenId: newOrder.tokenId,
-      makerAmount:  ethers.parseUnits(matchSize.toString(), 6),
-      takerAmount:  ethers.parseUnits(matchSize.toString(), 6),
-      price:        candidate.price,
-      side:         newOrder.side,
+
+  // Use a MongoDB session for atomic fill updates with rollback capability
+  const session = await mongoose.startSession();
+
+  try {
+    await session.withTransaction(async () => {
+      for (const candidate of candidates) {
+        if (remainingToFill <= 0) break;
+        
+        const matchSize = Math.min(remainingToFill, candidate.remainingSize);
+        
+        matches.push({
+          conditionId:  newOrder.conditionId,
+          maker:        candidate.maker,
+          taker:        newOrder.maker,
+          makerOrderId: candidate.orderId,
+          takerOrderId: newOrder.orderId,
+          makerTokenId: candidate.tokenId,
+          takerTokenId: newOrder.tokenId,
+          makerAmount:  ethers.parseUnits(matchSize.toString(), 6),
+          takerAmount:  ethers.parseUnits(matchSize.toString(), 6),
+          price:        candidate.price,
+          side:         newOrder.side,
+        });
+        
+        candidate.fill(matchSize);
+        await candidate.save({ session });
+        
+        remainingToFill -= matchSize;
+      }
+      
+      const filled = newOrder.remainingSize - remainingToFill;
+      if (filled > 0) {
+        newOrder.fill(filled);
+        await newOrder.save({ session });
+      }
     });
-    
-    // Update candidate
-    candidate.fill(matchSize);
-    await candidate.save();
-    
-    remainingToFill -= matchSize;
+  } finally {
+    await session.endSession();
   }
   
-  // Update new order
-  const filled = newOrder.remainingSize - remainingToFill;
-  if (filled > 0) {
-    newOrder.fill(filled);
-    await newOrder.save();
-  }
-  
-  // If we have matches, settle on-chain
+  // Settle on-chain AFTER DB transaction commits successfully
   if (matches.length > 0) {
-    await settleMatches(matches);
+    const settleResult = await settleMatches(matches);
+    
+    // If settlement fully failed, revert the DB fills
+    if (settleResult.settled === 0 && settleResult.total > 0) {
+      console.warn(`[CLOB] All ${settleResult.total} settlements failed — reverting DB fills`);
+      await revertMatches(matches, newOrder);
+    }
   }
   
   return matches;
+}
+
+/**
+ * Revert matched fills in DB when on-chain settlement fails completely.
+ */
+async function revertMatches(matches, takerOrder) {
+  try {
+    let totalReverted = 0;
+    for (const match of matches) {
+      const matchSize = parseFloat(ethers.formatUnits(match.makerAmount, 6));
+      
+      // Revert maker order
+      await Order.findOneAndUpdate(
+        { orderId: match.makerOrderId },
+        { $inc: { remainingSize: matchSize, filled: -matchSize }, status: 'open' }
+      );
+      totalReverted += matchSize;
+    }
+
+    // Revert taker order
+    if (totalReverted > 0) {
+      await Order.findOneAndUpdate(
+        { orderId: takerOrder.orderId },
+        { $inc: { remainingSize: totalReverted, filled: -totalReverted }, status: 'open' }
+      );
+    }
+    console.log(`[CLOB] Reverted ${totalReverted} shares across ${matches.length} matches`);
+  } catch (err) {
+    console.error(`[CLOB] Failed to revert matches: ${err.message}`);
+  }
 }
 
 /**
@@ -266,18 +322,29 @@ async function settleMatches(matches) {
 
       const takerStruct = buildOrderStruct(takerOrder);
       const makerStruct = buildOrderStruct(makerOrder);
-      const fillAmount  = match.makerAmount; // already BigInt
+      const fillAmount  = match.makerAmount; // already BigInt — maker fill in maker-amount units
+
+      // Compute taker fill amount in taker's maker-amount units for the partial fill
+      // For complementary matches: takerFillAmount is the portion of taker's makerAmount consumed
+      const matchSizeUnits = ethers.parseUnits(
+        Math.min(
+          parseFloat(ethers.formatUnits(match.makerAmount, 6)),
+          parseFloat(ethers.formatUnits(match.takerAmount, 6))
+        ).toFixed(6), 6
+      );
+      const takerFillAmount = takerOrder.side === 'buy'
+        ? ethers.parseUnits((parseFloat(ethers.formatUnits(matchSizeUnits, 6)) * takerOrder.price).toFixed(6), 6)
+        : matchSizeUnits;
 
       // callStatic first to surface reverts before spending gas
-      // matchOrders(takerOrder, makerOrders[], takerFillAmount, makerFillAmounts[])
       try {
-        await exchange.matchOrders.staticCall(takerStruct, [makerStruct], takerStruct.makerAmount, [fillAmount]);
+        await exchange.matchOrders.staticCall(takerStruct, [makerStruct], takerFillAmount, [fillAmount]);
       } catch (staticErr) {
         console.error(`[CLOB] matchOrders staticCall failed ${match.makerOrderId}/${match.takerOrderId}: ${staticErr.message}`);
         continue;
       }
 
-      const tx = await exchange.matchOrders(takerStruct, [makerStruct], takerStruct.makerAmount, [fillAmount]);
+      const tx = await exchange.matchOrders(takerStruct, [makerStruct], takerFillAmount, [fillAmount]);
       const receipt = await tx.wait();
 
       // Update orders with settlement hash
@@ -325,10 +392,13 @@ async function settleMatches(matches) {
       });
       await fillRecord.save();
 
-      // Mirror to Trade for platform users (DM3) — idempotent
-      const outcome = makerOrder.tokenId === takerOrder.tokenId
-        ? (parseInt(makerOrder.tokenId) % 2 === 1 ? 'Yes' : 'No') // Odd=YES, Even=NO based on tokenId pattern
-        : 'Yes'; // Fallback
+      // Determine outcome from market token mapping (token0 = Yes, token1 = No)
+      const fullMarket = market ? await Market.findById(market._id).select('token0 token1').lean() : null;
+      let outcome = 'Yes';
+      if (fullMarket) {
+        if (makerOrder.tokenId === fullMarket.token1) outcome = 'No';
+        else if (makerOrder.tokenId === fullMarket.token0) outcome = 'Yes';
+      }
 
       // Helper to create Trade idempotently
       const createTradeIfUser = async (user, address, type) => {
@@ -386,6 +456,37 @@ async function settleMatches(matches) {
         console.warn(`[CLOB] Failed to broadcast trade/orderbook: ${wsErr.message}`);
       }
 
+      // Sync on-chain balances for both users after settlement
+      try {
+        if (takerResolution.user?._id) await balanceSyncService.syncUser(takerResolution.user._id.toString());
+        if (makerResolution.user?._id) await balanceSyncService.syncUser(makerResolution.user._id.toString());
+      } catch (syncErr) {
+        console.warn(`[CLOB] Balance sync after settlement failed: ${syncErr.message}`);
+      }
+
+      // Notify both parties of the fill (Polymarket-style)
+      try {
+        const marketDoc = fullMarket || await Market.findOne({ conditionId: makerOrder.conditionId }).select('title slug').lean();
+        const marketTitle = marketDoc?.title || '';
+        
+        if (takerResolution.user?._id) {
+          notificationService.orderFilled(takerResolution.user._id, {
+            orderId: match.takerOrderId, side: takerOrder.side, price: fillPrice,
+            size: fillSize, marketTitle, conditionId: makerOrder.conditionId,
+            partial: takerOrder.remainingSize > 0,
+          }).catch(() => {});
+        }
+        if (makerResolution.user?._id && !makerResolution.isMakerBot) {
+          notificationService.orderFilled(makerResolution.user._id, {
+            orderId: match.makerOrderId, side: makerOrder.side, price: fillPrice,
+            size: fillSize, marketTitle, conditionId: makerOrder.conditionId,
+            partial: makerOrder.remainingSize > 0,
+          }).catch(() => {});
+        }
+      } catch (notifErr) {
+        console.warn(`[CLOB] Notification dispatch failed: ${notifErr.message}`);
+      }
+
       console.log(`[CLOB] matchOrders settled ${match.makerOrderId}/${match.takerOrderId} tx=${receipt.hash} fill=${fillRecord._id}`);
       results.push({ txHash: receipt.hash, makerOrderId: match.makerOrderId, takerOrderId: match.takerOrderId, fillId: fillRecord._id });
 
@@ -399,19 +500,34 @@ async function settleMatches(matches) {
 
 /**
  * Build the on-chain Order struct expected by CTFExchange.
- * Real struct (from deployed contract):
- *   (salt, maker, signer, taker, tokenId, makerAmount, takerAmount,
- *    expiration, nonce, feeRateBps, side, signatureType, signature)
+ * Uses the original signed amounts (stored at order creation) to ensure
+ * the struct matches the EIP-712 signature exactly.
  */
 function buildOrderStruct(order) {
+  // Use stored original amounts if available; otherwise reconstruct per side convention
+  let makerAmountBN, takerAmountBN;
+  if (order.originalMakerAmount && order.originalTakerAmount) {
+    makerAmountBN = BigInt(order.originalMakerAmount);
+    takerAmountBN = BigInt(order.originalTakerAmount);
+  } else {
+    // Fallback reconstruction for legacy orders
+    if (order.side === 'buy') {
+      makerAmountBN = ethers.parseUnits((order.size * order.price).toFixed(6), 6);
+      takerAmountBN = ethers.parseUnits(order.size.toString(), 6);
+    } else {
+      makerAmountBN = ethers.parseUnits(order.size.toString(), 6);
+      takerAmountBN = ethers.parseUnits((order.size * order.price).toFixed(6), 6);
+    }
+  }
+
   return {
     salt:          BigInt(order.salt || order.nonce || 0),
     maker:         order.maker,
     signer:        order.signer || order.maker,
     taker:         ethers.ZeroAddress,
     tokenId:       BigInt(order.tokenId || 0),
-    makerAmount:   ethers.parseUnits(order.size.toString(), 6),
-    takerAmount:   ethers.parseUnits((order.size * order.price).toFixed(6), 6),
+    makerAmount:   makerAmountBN,
+    takerAmount:   takerAmountBN,
     expiration:    BigInt(Math.floor(new Date(order.expiration).getTime() / 1000)),
     nonce:         BigInt(order.nonce || 0),
     feeRateBps:    BigInt(TAKER_FEE_BPS),
@@ -499,6 +615,20 @@ async function cancelOrder(orderId, makerAddress, safeProxy = null) {
   
   order.cancel();
   await order.save();
+
+  // Cancel on-chain to invalidate the EIP-712 signature (Polymarket pattern)
+  try {
+    if (process.env.ONCHAIN_ENABLED === 'true' && order.signature) {
+      const operator = getOperatorWallet();
+      const exchange = new ethers.Contract(ADDRESSES.CTF_EXCHANGE, ABIS.CTF_EXCHANGE, operator);
+      const orderStruct = buildOrderStruct(order);
+      await exchange.cancelOrder(orderStruct).catch(err => {
+        console.warn(`[CLOB] On-chain cancel failed (order may already be inactive): ${err.message}`);
+      });
+    }
+  } catch (err) {
+    console.warn(`[CLOB] On-chain cancellation attempt failed: ${err.message}`);
+  }
 
   // Broadcast order book update
   try {

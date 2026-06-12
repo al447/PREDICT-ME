@@ -30,6 +30,8 @@ const USDC_BY_CHAIN = {
   42161: { addr: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', rpc: process.env.ARB_RPC_URL    || 'https://arb1.arbitrum.io/rpc' },
   10:    { addr: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85', rpc: process.env.OP_RPC_URL     || 'https://mainnet.optimism.io' },
   43114: { addr: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E', rpc: process.env.AVAX_RPC_URL   || 'https://api.avax.network/ext/bc/C/rpc' },
+  137:   { addr: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', rpc: process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com' },
+  56:    { addr: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', rpc: process.env.BSC_RPC_URL    || 'https://bsc-dataseed.binance.org' },
 };
 
 // Testnet chains (enable when testing)

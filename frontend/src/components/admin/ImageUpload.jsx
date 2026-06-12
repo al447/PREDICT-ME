@@ -1,6 +1,18 @@
 import { useState, useRef, useEffect } from 'react';
 import { Upload, X, ImageIcon, Loader2 } from 'lucide-react';
-import api from '../../services/api';
+import axios from 'axios';
+
+const uploadApi = axios.create({
+  baseURL: (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000') + '/api',
+  timeout: 30000,
+});
+uploadApi.interceptors.request.use((config) => {
+  const adminToken = localStorage.getItem('pb365_admin_token');
+  const userToken = localStorage.getItem('pb365_token');
+  if (adminToken) config.headers.Authorization = `Bearer ${adminToken}`;
+  else if (userToken) config.headers.Authorization = `Bearer ${userToken}`;
+  return config;
+});
 import toast from 'react-hot-toast';
 
 const PRESETS = ['📊', '📈', '📉', '🏆', '⚽', '🏀', '🎾', '🪙', '💰', '🌍', '🌡️', '🌧️', '🗳️', '🏛️', '📰', '⚡', '🚀', '🎯', '💎', '🎲', '🎮', '🎬', '🎵', '🎨', '🐶', '🐱', '🦅', '🌙', '☀️', '⭐', '🔥', '💧'];
@@ -47,7 +59,7 @@ const ImageUpload = ({ value, onChange }) => {
       const formData = new FormData();
       formData.append('image', file);
 
-      const { data } = await api.post('/upload/image', formData, {
+      const { data } = await uploadApi.post('/upload/image', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },

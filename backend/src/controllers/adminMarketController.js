@@ -304,29 +304,94 @@ const resolve = async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'Market already resolved' });
     }
 
-    // ── On-chain markets: cancel all open CLOB orders and log resolution ──
+    // ── Cancel CLOB orders + settle trades + on-chain reportPayouts ──
     let onChainNote = null;
-    if (market.onChain && market.conditionId) {
+    let settledTradeCount = 0;
+
+    // Cancel all open CLOB orders for this market
+    if (market.conditionId) {
       try {
         const Order = require('../models/Order');
         const cancelResult = await Order.updateMany(
           { conditionId: market.conditionId, status: { $in: ['open', 'partially_filled'] } },
           { status: 'cancelled' }
         );
-        onChainNote = `Cancelled ${cancelResult.modifiedCount} open CLOB orders. Users may now redeem via /api/onchain/positions/${market.conditionId}/redeem`;
-        console.log(`[Admin] On-chain market resolved: conditionId=${market.conditionId} outcome=${outcome} ${onChainNote}`);
+        onChainNote = `Cancelled ${cancelResult.modifiedCount} open CLOB orders.`;
       } catch (err) {
-        console.error('[Admin] Failed to cancel CLOB orders on resolve:', err.message);
+        console.error('[Admin] Failed to cancel CLOB orders:', err.message);
         onChainNote = `Warning: CLOB order cleanup failed: ${err.message}`;
       }
     }
 
-    await audit.log({ admin: req.user._id, action: 'market_resolve', targetType: 'market', targetId: market._id, details: { outcome, title: market.title, onChainNote }, ipAddress: req.ip });
+    // Settle open trades — mark winning trades as 'won', losing as 'lost'
+    try {
+      const winningOutcome = outcome === 'yes' ? 'Yes' : outcome === 'no' ? 'No' : null;
+      if (winningOutcome && market._id) {
+        const winResult = await Trade.updateMany(
+          { market: market._id, status: 'open', outcome: winningOutcome },
+          { status: 'won', settledAt: new Date() }
+        );
+        const loseResult = await Trade.updateMany(
+          { market: market._id, status: 'open', outcome: { $ne: winningOutcome } },
+          { status: 'lost', settledAt: new Date() }
+        );
+        settledTradeCount = (winResult.modifiedCount || 0) + (loseResult.modifiedCount || 0);
+        onChainNote += ` Settled ${settledTradeCount} trades (${winResult.modifiedCount} won, ${loseResult.modifiedCount} lost).`;
+      } else if (outcome === 'cancelled') {
+        const refundResult = await Trade.updateMany(
+          { market: market._id, status: 'open' },
+          { status: 'refunded', settledAt: new Date() }
+        );
+        settledTradeCount = refundResult.modifiedCount || 0;
+        onChainNote += ` Refunded ${settledTradeCount} trades (market cancelled).`;
+      }
+    } catch (err) {
+      console.error('[Admin] Trade settlement failed:', err.message);
+      onChainNote += ` Warning: Trade settlement failed: ${err.message}`;
+    }
+
+    // On-chain: trigger reportPayouts via UMA adapter (if on-chain market)
+    if (market.onChain && market.conditionId) {
+      try {
+        const onchainService = require('../services/onchainService');
+        if (onchainService.ONCHAIN_ENABLED) {
+          await onchainService.reportPayoutsOnChain(market.questionId, outcome);
+          onChainNote += ` On-chain payouts reported. Users may redeem via /api/onchain/positions/${market.conditionId}/redeem`;
+        }
+      } catch (err) {
+        console.error('[Admin] On-chain reportPayouts failed:', err.message);
+        onChainNote += ` Warning: On-chain reportPayouts failed (users may need manual resolution): ${err.message}`;
+      }
+
+      // Notify affected users about market resolution
+      try {
+        const notificationService = require('../services/notificationService');
+        const affectedTrades = await Trade.find({ market: market._id, status: { $in: ['won', 'lost', 'refunded'] } })
+          .select('user outcome status')
+          .lean();
+        
+        const notifiedUsers = new Set();
+        for (const trade of affectedTrades) {
+          if (notifiedUsers.has(trade.user.toString())) continue;
+          notifiedUsers.add(trade.user.toString());
+          
+          if (trade.status === 'won') {
+            await notificationService.marketWon(trade.user, market, 0);
+          } else {
+            await notificationService.marketResolved(trade.user, market, market.resolution);
+          }
+        }
+      } catch (err) {
+        console.warn('[Admin] Notification dispatch failed:', err.message);
+      }
+    }
+
+    await audit.log({ admin: req.user._id, action: 'market_resolve', targetType: 'market', targetId: market._id, details: { outcome, title: market.title, onChainNote, settledTradeCount }, ipAddress: req.ip });
 
     invalidateCache('/api/markets');
     invalidateCache('/api/categories');
 
-    res.json({ success: true, market, onChainNote });
+    res.json({ success: true, market, onChainNote, settledTradeCount });
   } catch (e) { next(e); }
 };
 

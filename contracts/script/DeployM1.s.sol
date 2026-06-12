@@ -93,6 +93,14 @@ contract DeployM1 is Script {
         );
         console.log("MarketFactory:", address(marketFactory));
 
+        // 9. Post-deploy: add MarketFactory as admin on CTFExchange and NegRiskExchange
+        //    so it can register conditions and operate on behalf of users
+        _addAdmin(ctfExchange, address(marketFactory));
+        _addAdmin(negRiskExchange, address(marketFactory));
+        // Add deployer as operator on exchanges so the CLOB relayer can settle trades
+        _addOperator(ctfExchange, deployer);
+        _addOperator(negRiskExchange, deployer);
+
         vm.stopBroadcast();
 
         // Summary for copy-paste into .env files
@@ -149,5 +157,19 @@ contract DeployM1 is Script {
         bytes memory initCode = abi.encodePacked(creationCode, abi.encode(collateral, ctf, negRiskAdapter, proxyFactory, safeFactory));
         assembly { exchange := create(0, add(initCode, 0x20), mload(initCode)) }
         require(exchange != address(0), "NegRiskExchange deploy failed");
+    }
+
+    /// @dev Call addAdmin(address) on an exchange contract
+    function _addAdmin(address exchange, address admin) internal {
+        (bool ok, ) = exchange.call(abi.encodeWithSignature("addAdmin(address)", admin));
+        if (!ok) console.log("Warning: addAdmin failed on", exchange, "for", admin);
+        else console.log("addAdmin:", admin, "on", exchange);
+    }
+
+    /// @dev Call addOperator(address) on an exchange contract
+    function _addOperator(address exchange, address operator) internal {
+        (bool ok, ) = exchange.call(abi.encodeWithSignature("addOperator(address)", operator));
+        if (!ok) console.log("Warning: addOperator failed on", exchange, "for", operator);
+        else console.log("addOperator:", operator, "on", exchange);
     }
 }

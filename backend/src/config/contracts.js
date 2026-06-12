@@ -145,6 +145,14 @@ const getRelayerKey = () => {
   return key;
 };
 
+// Public address of the operator wallet (derived from OPERATOR_PRIVATE_KEY).
+// Used as the on-chain destination when a user's Safe is debited for a
+// cross-chain bridge withdrawal (the operator then bridges from its own wallet).
+const getOperatorAddress = () => {
+  const { ethers } = require('ethers');
+  return new ethers.Wallet(getOperatorKey()).address;
+};
+
 function validate() {
   const missing = Object.entries(ADDRESSES)
     .filter(([_, val]) => !val)
@@ -173,5 +181,6 @@ module.exports = {
   RELAY_CONFIG,
   MESSAGE_TRANSMITTER_ABI,
   getOperatorKey,
+  getOperatorAddress,
   getRelayerKey,
 };

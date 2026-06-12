@@ -60,26 +60,80 @@ async function getQuote({ fromAmountUsdc, toChainType, toChainId, toToken, recip
 }
 
 /**
- * Execute a withdrawal.
+ * Execute a cross-chain bridge withdrawal.
+ *
+ * NON-CUSTODIAL FLOW (no operator-funded leak):
+ *   1. Validate amount + limits + on-chain Safe balance.
+ *   2. Debit the user's Safe by executing a USER-SIGNED USDC transfer
+ *      (proxy → operator) on Polygon. The relayer pays gas; the user's Safe
+ *      balance actually drops, so balanceSyncService stays truthful.
+ *   3. Operator bridges its own USDC (now including the user's) to the
+ *      destination chain.
+ *   4. On bridge failure, the operator refunds USDC back to the user's Safe.
+ *
+ * The user MUST provide `userSignature` — the EIP-712 SafeTx signature for the
+ * proxy→operator USDC transfer (obtained via /api/onchain/withdraw/prepare with
+ * recipient = operator address). Without it we cannot debit the Safe and refuse.
+ *
  * @param {string} userId
- * @param {object} params - same as getQuote + { provider }
+ * @param {object} params - getQuote params + { provider, userSignature }
  */
-async function executeWithdrawal(userId, { fromAmountUsdc, toChainType, toChainId, toToken, recipientAddr, provider = 'across' }) {
+async function executeWithdrawal(userId, { fromAmountUsdc, toChainType, toChainId, toToken, recipientAddr, provider = 'across', userSignature }) {
   validateAmount(fromAmountUsdc);
 
   const user = await User.findById(userId);
   if (!user) throw new Error('User not found');
 
-  // Enforce balance
-  if ((user.balance || 0) < fromAmountUsdc) {
-    throw new Error(`[Withdraw] Insufficient balance: have ${user.balance}, need ${fromAmountUsdc}`);
+  const proxyAddress = user.smartWallet?.proxy;
+  if (!proxyAddress) {
+    throw new Error('[Withdraw] No smart wallet provisioned — deposit first.');
+  }
+  if (!userSignature) {
+    throw new Error('[Withdraw] Missing signature. A signed Safe authorization is required to debit your wallet.');
+  }
+
+  // On-chain Safe balance is the source of truth
+  const balSync = require('./balanceSyncService');
+  const onchainBalance = await balSync.readOnchainBalance(proxyAddress);
+  const effectiveBalance = onchainBalance !== null ? onchainBalance : (user.balance || 0);
+  if (effectiveBalance < fromAmountUsdc) {
+    throw new Error(`[Withdraw] Insufficient balance: have ${effectiveBalance.toFixed(2)}, need ${fromAmountUsdc}`);
   }
 
   // Enforce withdrawalLimits
   enforceWithdrawalLimits(user, fromAmountUsdc);
 
-  // Reserve balance (debit first to prevent double-spend)
-  await User.findByIdAndUpdate(userId, { $inc: { balance: -fromAmountUsdc } });
+  // ── Step 1: Debit the Safe (proxy → operator) using the user's signature ──
+  // This is the SAME signed Safe-transfer used by the same-chain withdrawal path.
+  // The user's on-chain USDC actually moves to the operator, so there is no
+  // operator-funded leak and the DB balance does not need a (sync-erasable) $inc.
+  //
+  // Gated on BRIDGE_SWEEP_ENABLED so the debit stays consistent with the bridge
+  // step: in simulation/mock mode (sweep disabled) executeAsync does NOT perform a
+  // real bridge, so we must NOT perform a real Safe debit either (otherwise the
+  // user's funds would leave the Safe with nothing delivered to the destination).
+  const sweepEnabled = process.env.BRIDGE_SWEEP_ENABLED === 'true';
+  let safeDebitTxHash = null;
+  if (sweepEnabled) {
+    const { getOperatorAddress } = require('../config/contracts');
+    const withdrawalService = require('./withdrawalService');
+    const operatorAddress = getOperatorAddress();
+    try {
+      const debit = await withdrawalService.executeWithdrawal(
+        proxyAddress,
+        operatorAddress,
+        fromAmountUsdc,
+        userSignature,
+      );
+      safeDebitTxHash = debit?.txHash || null;
+    } catch (err) {
+      throw new Error(`[Withdraw] Safe debit failed: ${err.message}`);
+    }
+    // Reflect the on-chain debit in the cached balance immediately.
+    balSync.syncUser(userId).catch(() => {});
+  } else {
+    console.warn(`[Withdraw] BRIDGE_SWEEP_ENABLED=false — simulating withdrawal of ${fromAmountUsdc} USDC (no Safe debit, no bridge) for user ${userId}`);
+  }
 
   const record = await BridgeWithdrawal.create({
     userId,
@@ -89,17 +143,40 @@ async function executeWithdrawal(userId, { fromAmountUsdc, toChainType, toChainI
     toToken,
     recipientAddr,
     provider,
+    safeDebitTxHash,
     status: 'pending',
   });
 
-  // Execute async (non-blocking)
-  executeAsync(record._id.toString(), { toChainType, provider, fromAmountUsdc, toChainId, toToken, recipientAddr, userId })
+  // Execute async (non-blocking). Funds are already at the operator.
+  executeAsync(record._id.toString(), { toChainType, provider, fromAmountUsdc, toChainId, toToken, recipientAddr, userId, proxyAddress })
     .catch(err => console.error(`[Withdraw] Async execution failed for ${record._id}:`, err.message));
 
-  return { withdrawalId: record._id, status: 'pending' };
+  return { withdrawalId: record._id, status: 'pending', safeDebitTxHash };
 }
 
-async function executeAsync(withdrawalId, { toChainType, provider, fromAmountUsdc, toChainId, toToken, recipientAddr, userId }) {
+/**
+ * Refund a failed bridge withdrawal: operator sends the USDC back to the user's
+ * Safe (operator controls its own wallet, so no user signature is needed).
+ */
+async function refundToProxy(proxyAddress, fromAmountUsdc) {
+  if (!proxyAddress) return null;
+  if (process.env.BRIDGE_SWEEP_ENABLED !== 'true') {
+    console.warn(`[Withdraw] BRIDGE_SWEEP_ENABLED=false — skipping on-chain refund of ${fromAmountUsdc} to ${proxyAddress} (mock mode)`);
+    return null;
+  }
+  const { ethers } = require('ethers');
+  const { ADDRESSES, RPC_URL: POLYGON_RPC, getOperatorKey } = require('../config/contracts');
+  const provider = new ethers.JsonRpcProvider(POLYGON_RPC);
+  const wallet = new ethers.Wallet(getOperatorKey(), provider);
+  const usdc = new ethers.Contract(ADDRESSES.MOCK_USDC, ['function transfer(address to, uint256 amount) returns (bool)'], wallet);
+  const amountBase = Math.round(fromAmountUsdc * 1e6);
+  const tx = await usdc.transfer(proxyAddress, amountBase);
+  const receipt = await tx.wait();
+  console.log(`[Withdraw] Refunded ${fromAmountUsdc} USDC → proxy ${proxyAddress} tx=${receipt.hash}`);
+  return receipt.hash;
+}
+
+async function executeAsync(withdrawalId, { toChainType, provider, fromAmountUsdc, toChainId, toToken, recipientAddr, userId, proxyAddress }) {
   try {
     await BridgeWithdrawal.findByIdAndUpdate(withdrawalId, { status: 'bridging' });
 
@@ -240,12 +317,24 @@ async function executeAsync(withdrawalId, { toChainType, provider, fromAmountUsd
     });
   } catch (err) {
     console.error(`[Withdraw] executeAsync ${withdrawalId} failed:`, err.message);
+    // Refund on failure: the Safe was already debited (proxy → operator), so the
+    // operator returns the USDC on-chain to the user's Safe. balanceSyncService
+    // then reflects the restored balance. Do NOT $inc the DB balance (it would be
+    // erased by the next sync and would not match the on-chain Safe balance).
+    let refundTxHash = null;
+    try {
+      refundTxHash = await refundToProxy(proxyAddress, fromAmountUsdc);
+      if (refundTxHash) {
+        require('./balanceSyncService').syncUser(userId).catch(() => {});
+      }
+    } catch (refundErr) {
+      console.error(`[Withdraw] On-chain refund FAILED for ${withdrawalId} (proxy ${proxyAddress}, $${fromAmountUsdc}):`, refundErr.message);
+    }
     await BridgeWithdrawal.findByIdAndUpdate(withdrawalId, {
       status:       'failed',
       errorMessage: err.message,
+      refundTxHash: refundTxHash || undefined,
     });
-    // Refund deducted balance on failure
-    await User.findByIdAndUpdate(userId, { $inc: { balance: fromAmountUsdc } });
   }
 }
 
@@ -294,4 +383,69 @@ function resolveDestToken(chainId, token) {
   throw new Error(`[Withdraw] Cannot resolve token ${token} on chain ${chainId}`);
 }
 
-module.exports = { getQuote, executeWithdrawal };
+// ── Withdrawal Completion Poller ──────────────────────────────────────────────
+
+const POLL_MS = parseInt(process.env.WITHDRAWAL_POLL_MS || '60000');
+let _pollerTimer = null;
+
+async function pollPendingWithdrawals() {
+  try {
+    const pending = await BridgeWithdrawal.find({
+      status: { $in: ['pending', 'bridging'] },
+      createdAt: { $gt: new Date(Date.now() - 24 * 60 * 60 * 1000) }, // last 24h
+    }).lean();
+
+    if (pending.length === 0) return;
+
+    for (const w of pending) {
+      try {
+        // Check if bridging has been too long (> 2 hours) — mark as requires_attention
+        const age = Date.now() - new Date(w.createdAt).getTime();
+        if (age > 2 * 60 * 60 * 1000 && w.status === 'bridging') {
+          await BridgeWithdrawal.findByIdAndUpdate(w._id, {
+            status: 'requires_attention',
+            errorMessage: `Bridge has been pending for ${Math.round(age / 60000)} minutes`,
+          });
+          console.warn(`[Withdraw] Withdrawal ${w._id} stuck in bridging for ${Math.round(age / 60000)}min`);
+        }
+
+        // For completed Across withdrawals, verify tx on-chain
+        if (w.txHash && w.provider === 'across') {
+          const { ethers } = require('ethers');
+          const rpcUrl = w.toChainId === 137
+            ? (process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com')
+            : (process.env.ETH_RPC_URL || 'https://eth.llamarpc.com');
+          const provider = new ethers.JsonRpcProvider(rpcUrl);
+          const receipt = await provider.getTransactionReceipt(w.txHash).catch(() => null);
+          if (receipt && receipt.status === 1) {
+            await BridgeWithdrawal.findByIdAndUpdate(w._id, { status: 'completed' });
+
+            // Notify user
+            try {
+              const notificationService = require('./notificationService');
+              await notificationService.withdrawalProcessed(w.userId, { _id: w._id, amount: w.fromAmountUsdc });
+            } catch {}
+          }
+        }
+      } catch (err) {
+        console.error(`[Withdraw] Poll check failed for ${w._id}: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    console.error('[Withdraw] pollPendingWithdrawals error:', err.message);
+  }
+}
+
+function startWithdrawalPoller() {
+  if (_pollerTimer) return;
+  _pollerTimer = setInterval(() => {
+    pollPendingWithdrawals().catch(err => console.error('[Withdraw] Poller error:', err.message));
+  }, POLL_MS);
+  console.log(`[Withdraw] Completion poller started (${POLL_MS}ms interval)`);
+}
+
+function stopWithdrawalPoller() {
+  if (_pollerTimer) { clearInterval(_pollerTimer); _pollerTimer = null; }
+}
+
+module.exports = { getQuote, executeWithdrawal, startWithdrawalPoller, stopWithdrawalPoller };

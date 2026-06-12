@@ -14,32 +14,32 @@ import { BigInt, BigDecimal, Bytes } from '@graphprotocol/graph-ts';
 export function handleOrdersMatched(event: OrdersMatched): void {
   const tradeId = event.transaction.hash.toHex() + '-' + event.logIndex.toString();
 
-  // The conditionId is encoded in the upper 128 bits of the token ID (CTF convention).
-  // For indexing purposes we use takerAssetId as the market key since it represents
-  // the outcome token the taker is providing (the complementary side).
   const tokenId = event.params.makerAssetId;
-  const marketId = tokenId.toHex();
+
+  // Derive conditionId from tokenId: iterate known markets to find which one
+  // owns this tokenId. For CTF, tokenId = positionId derived from conditionId.
+  // Use tokenId hex as lookup key; market's token0/token1 should match.
+  const tokenIdHex = tokenId.toHex();
 
   // Calculate price: makerAmountFilled / (makerAmountFilled + takerAmountFilled)
-  // Avoid division by zero
   let price = BigDecimal.fromString('0');
   const total = event.params.makerAmountFilled.plus(event.params.takerAmountFilled);
   if (total.gt(BigInt.fromI32(0))) {
     price = event.params.makerAmountFilled.toBigDecimal().div(total.toBigDecimal());
   }
 
-  // Resolve market entity (may be null if MarketFactory event not yet indexed)
-  const market = Market.load(marketId);
+  // Try to resolve market by tokenId (token0 or token1)
+  // Market.id is conditionId set by MarketFactory handler
+  let market = Market.load(tokenIdHex);
 
   // Create Trade entity
   let trade = new Trade(tradeId);
-  // Use takerOrderHash as a unique order reference; conditionId comes from market lookup
-  trade.conditionId = event.params.takerOrderHash;
+  trade.conditionId = market != null ? Bytes.fromHexString(market.id) : Bytes.empty();
   trade.tokenId = tokenId;
-  // takerOrderMaker is the address of the taker-side order creator
-  trade.maker = event.params.takerOrderMaker;
-  // The maker-side order maker is not directly in this event; use from as best proxy
-  trade.taker = event.transaction.from;
+  // takerOrderMaker is the address that placed the taker order
+  trade.taker = event.params.takerOrderMaker;
+  // The operator (transaction.from) submits the match; not the counterparty maker
+  trade.maker = event.transaction.from;
   trade.makerAmount = event.params.makerAmountFilled;
   trade.takerAmount = event.params.takerAmountFilled;
   trade.price = price;
@@ -47,32 +47,23 @@ export function handleOrdersMatched(event: OrdersMatched): void {
   trade.timestamp = event.block.timestamp;
   trade.blockNumber = event.block.number;
   trade.transactionHash = event.transaction.hash;
-  // market field is required — only set if we can resolve it
-  if (market != null) {
-    trade.market = market.id;
-  } else {
-    trade.market = marketId; // forward-reference; will be filled when market is indexed
-  }
+  trade.market = market != null ? market.id : tokenIdHex;
   trade.save();
 
   // Create OrderMatch entity
   const matchId = event.transaction.hash.toHex() + '-' + event.logIndex.toString() + '-match';
   let match = new OrderMatch(matchId);
-  match.conditionId = event.params.takerOrderHash;
+  match.conditionId = market != null ? Bytes.fromHexString(market.id) : Bytes.empty();
   match.tokenId = tokenId;
-  match.maker = event.params.takerOrderMaker;
-  match.taker = event.transaction.from;
+  match.taker = event.params.takerOrderMaker;
+  match.maker = event.transaction.from;
   match.makerAmount = event.params.makerAmountFilled;
   match.takerAmount = event.params.takerAmountFilled;
   match.timestamp = event.block.timestamp;
   match.blockNumber = event.block.number;
   match.transactionHash = event.transaction.hash;
   match.logIndex = event.logIndex;
-  if (market != null) {
-    match.market = market.id;
-  } else {
-    match.market = marketId;
-  }
+  match.market = market != null ? market.id : tokenIdHex;
   match.save();
 
   // Update global stats

@@ -280,6 +280,31 @@ const creditDeposit = async ({ chain, token, txHash, sender, amount, blockNumber
     return { skipped: true, reason: 'no_price' };
   }
 
+  // ── Non-custodial (on-chain) mode guard ───────────────────────────────────
+  // When ONCHAIN_ENABLED=true the source of truth for User.balance is the user's
+  // on-chain proxy USDC balance (balanceSyncService overwrites it every cycle).
+  // These legacy custodial deposits land in PLATFORM_WALLET, NOT the user's proxy,
+  // so a $inc here would be erased by the next sync (and would credit funds the
+  // user can't actually trade). Record the deposit as pending for manual sweep
+  // to the proxy instead of touching the chain-mirrored balance.
+  if (process.env.ONCHAIN_ENABLED === 'true') {
+    await PendingDeposit.create({
+      user: user._id,
+      chain,
+      token,
+      txHash: txHashLower,
+      claimedAmountUsd: amount,
+      creditedAmountUsd,
+      sender: senderLower,
+      status: 'pending',
+      source: 'auto-indexer',
+      reviewedAt: new Date(),
+      notes: note || `On-chain mode: custodial deposit to platform wallet at block ${blockNumber}. Sweep to user proxy required before crediting (balance is chain-mirrored).`,
+    }).catch(() => {});
+    console.log(`[DepositIndexer] ⏸️  On-chain mode — recorded $${creditedAmountUsd.toFixed(2)} ${token} as pending (no balance $inc) for user ${user._id}, tx: ${txHashLower}`);
+    return { skipped: true, reason: 'onchain_mode_pending_sweep', amountUsd: creditedAmountUsd, userId: user._id };
+  }
+
   // Atomic credit: PendingDeposit (idempotency lock via unique txHash) + balance + audit
   // all in one transaction. A crash can never leave a deposit marked credited without
   // the matching balance increment, and a concurrent duplicate aborts on the unique index.

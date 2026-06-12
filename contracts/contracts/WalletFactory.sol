@@ -110,12 +110,29 @@ contract WalletFactory is Ownable {
     /**
      * @notice Predict the proxy address for `owner` without deploying.
      *         Uses the same CREATE2 parameters as getOrCreateProxy.
+     *         The Gnosis Safe ProxyFactory salt = keccak256(keccak256(initializer) ++ saltNonce).
      */
     function predictProxyAddress(address owner) external view returns (address) {
         uint256 saltNonce = uint256(keccak256(abi.encodePacked(owner)));
+
+        // Reconstruct the same initializer that getOrCreateProxy builds
+        address[] memory owners = new address[](1);
+        owners[0] = owner;
+        bytes memory initializer = abi.encodeWithSelector(
+            IGnosisSafe.setup.selector,
+            owners,
+            1,
+            address(0),
+            bytes(""),
+            fallbackHandler,
+            address(0),
+            0,
+            payable(address(0))
+        );
+
         bytes memory creationCode = proxyFactory.proxyCreationCode();
         bytes memory deploymentData = abi.encodePacked(creationCode, uint256(uint160(safeSingleton)));
-        bytes32 salt = keccak256(abi.encodePacked(keccak256(bytes("")), saltNonce));
+        bytes32 salt = keccak256(abi.encodePacked(keccak256(initializer), saltNonce));
         bytes32 hash = keccak256(
             abi.encodePacked(bytes1(0xff), address(proxyFactory), salt, keccak256(deploymentData))
         );

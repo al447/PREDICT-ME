@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { adminAuth } = require('../middleware/adminAuth');
+const { protect } = require('../middleware/auth');
 
 const router = express.Router();
 

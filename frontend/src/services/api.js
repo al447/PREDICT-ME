@@ -206,10 +206,18 @@ export const polymarketAPI = {
 
 export const notificationAPI = {
   getNotifications: (params) => api.get('/notifications', { params }),
-  getUnreadCount: () => api.get('/notifications', { params: { unreadOnly: true } }),
+  getUnreadCount: () => api.get('/notifications/count'),
   markAsRead: (id) => api.put(`/notifications/${id}/read`),
   markAllAsRead: () => api.put('/notifications/read-all'),
   deleteNotification: (id) => api.delete(`/notifications/${id}`),
+  dismiss: (id) => api.put(`/notifications/${id}/dismiss`),
+  clearAll: () => api.delete('/notifications'),
+  // Preferences
+  getPreferences: () => api.get('/notifications/preferences'),
+  updatePreferences: (data) => api.put('/notifications/preferences', data),
+  // Price Alerts
+  addPriceAlert: (data) => api.post('/notifications/price-alerts', data),
+  removePriceAlert: (alertId) => api.delete(`/notifications/price-alerts/${alertId}`),
 };
 
 export default api;

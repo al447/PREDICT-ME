@@ -10,9 +10,9 @@ const adminAuth = async (req, res, next) => {
     return res.status(401).json({ success: false, error: 'Not authorized, no token' });
   }
   try {
-    const secret = process.env.ADMIN_JWT_SECRET;
+    const secret = process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET;
     if (!secret) {
-      console.error('[AdminAuth] ADMIN_JWT_SECRET is not set — refusing all admin requests');
+      console.error('[AdminAuth] Neither ADMIN_JWT_SECRET nor JWT_SECRET is set — refusing all admin requests');
       return res.status(500).json({ success: false, error: 'Server misconfiguration' });
     }
     const decoded = jwt.verify(token, secret);

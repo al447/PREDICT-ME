@@ -55,7 +55,7 @@ const CashAmountStep = ({ methodId, onBack, onSuccess, walletAddress }) => {
           stopPolling();
           setPolling(false);
           setStatusMsg('');
-          onSuccess({ txId: data.externalTxId, amount: res.creditedAmountUsd || data.amount, methodId });
+          onSuccess({ externalTxId: data.externalTxId, amount: res.creditedAmountUsd || data.amount, methodId });
           return;
         }
         if (res.providerStatus === 'failed' || res.providerStatus === 'rejected') {

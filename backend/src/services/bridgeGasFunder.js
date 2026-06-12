@@ -78,4 +78,77 @@ async function ensureSolanaGas(intakePubkeyStr, minLamports) {
   console.log(`[GasFunder] Topped up ${intakePubkeyStr} with ${topUpAmount} lamports (${(topUpAmount / LAMPORTS_PER_SOL).toFixed(6)} SOL), tx: ${sig}`);
 }
 
-module.exports = { ensureSolanaGas };
+/**
+ * Ensure an EVM intake address has enough native gas for approve + bridge deposit.
+ * Operator sends ETH/MATIC/etc. from the operator wallet.
+ *
+ * @param {string} intakeAddress - The EVM HD-derived intake address
+ * @param {number} chainId - The EVM chain ID
+ */
+async function ensureEvmGas(intakeAddress, chainId) {
+  if (!SWEEP_ENABLED) {
+    console.log(`[GasFunder] Mock mode — skipping EVM gas check for ${intakeAddress} on chain ${chainId}`);
+    return;
+  }
+
+  const { ethers } = require('ethers');
+  const { getOperatorKey } = require('../config/contracts');
+
+  const RPC_URLS = {
+    1:     process.env.ETH_RPC_URL    || 'https://eth.llamarpc.com',
+    8453:  process.env.BASE_RPC_URL   || 'https://mainnet.base.org',
+    42161: process.env.ARB_RPC_URL    || 'https://arb1.arbitrum.io/rpc',
+    10:    process.env.OP_RPC_URL     || 'https://mainnet.optimism.io',
+    43114: process.env.AVAX_RPC_URL   || 'https://api.avax.network/ext/bc/C/rpc',
+    137:   process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com',
+    56:    process.env.BSC_RPC_URL     || 'https://bsc-dataseed.binance.org',
+  };
+
+  const rpcUrl = RPC_URLS[chainId];
+  if (!rpcUrl) throw new Error(`[GasFunder] No RPC for EVM chain ${chainId}`);
+
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const balance = await provider.getBalance(intakeAddress);
+
+  // Need ~0.002 ETH for approve + deposit (varies by chain but safe minimum)
+  const MIN_GAS = {
+    1: ethers.parseEther('0.003'),      // Ethereum
+    8453: ethers.parseEther('0.0005'),   // Base
+    42161: ethers.parseEther('0.0005'),  // Arbitrum
+    10: ethers.parseEther('0.0005'),     // Optimism
+    43114: ethers.parseEther('0.01'),    // Avalanche
+    137: ethers.parseEther('0.01'),      // Polygon (MATIC)
+    56: ethers.parseEther('0.001'),      // BSC
+  };
+
+  const threshold = MIN_GAS[chainId] || ethers.parseEther('0.002');
+
+  if (balance >= threshold) {
+    console.log(`[GasFunder] Intake ${intakeAddress} on chain ${chainId} has sufficient gas (${ethers.formatEther(balance)})`);
+    return;
+  }
+
+  const operatorKey = getOperatorKey();
+  if (!operatorKey) throw new Error('[GasFunder] OPERATOR_PRIVATE_KEY not configured — cannot fund EVM gas');
+
+  const wallet = new ethers.Wallet(operatorKey, provider);
+  const topUpAmount = threshold - balance + ethers.parseEther('0.0001'); // small buffer
+
+  const operatorBalance = await provider.getBalance(wallet.address);
+  if (operatorBalance < topUpAmount + ethers.parseEther('0.0001')) {
+    throw new Error(
+      `[GasFunder] Operator native balance too low on chain ${chainId}: ` +
+      `have ${ethers.formatEther(operatorBalance)}, need ${ethers.formatEther(topUpAmount)}. ` +
+      `Fund operator ${wallet.address}`
+    );
+  }
+
+  const tx = await wallet.sendTransaction({
+    to: intakeAddress,
+    value: topUpAmount,
+  });
+  const receipt = await tx.wait();
+  console.log(`[GasFunder] Topped up ${intakeAddress} on chain ${chainId} with ${ethers.formatEther(topUpAmount)} native gas, tx: ${receipt.hash}`);
+}
+
+module.exports = { ensureSolanaGas, ensureEvmGas };

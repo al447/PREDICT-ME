@@ -172,9 +172,15 @@ export function useCreateOrder() {
       const makerAddress    = makerOverride || user?.smartWallet?.proxy || signerAddress;
       const signatureType   = user?.smartWallet?.signatureType ?? 0; // 0=EOA, 1=POLY_PROXY, 2=GNOSIS_SAFE
 
-      // Calculate amounts (6-decimal USDC)
-      const makerAmountBN = ethers.parseUnits(size.toFixed(6), 6);
-      const takerAmountBN = ethers.parseUnits((size * price).toFixed(6), 6);
+      // Calculate amounts per Polymarket convention (6-decimal USDC)
+      // BUY: maker offers USDC (size*price), wants shares (size)
+      // SELL: maker offers shares (size), wants USDC (size*price)
+      const makerAmountBN = side === 'buy'
+        ? ethers.parseUnits((size * price).toFixed(6), 6)
+        : ethers.parseUnits(size.toFixed(6), 6);
+      const takerAmountBN = side === 'buy'
+        ? ethers.parseUnits(size.toFixed(6), 6)
+        : ethers.parseUnits((size * price).toFixed(6), 6);
 
       const sideNum  = side === 'buy' ? 0 : 1;
       const salt     = BigInt(Math.floor(Math.random() * 1e15));
@@ -258,8 +264,8 @@ export function useCancelOrder() {
 export function useMarketSpread(conditionId, tokenId) {
   const { data: orderBook, isLoading } = useOrderBook(conditionId, tokenId, 1);
   
-  const bestBid = orderBook?.data?.bids?.[0]?.price || 0;
-  const bestAsk = orderBook?.data?.asks?.[0]?.price || 0;
+  const bestBid = orderBook?.bids?.[0]?.price || 0;
+  const bestAsk = orderBook?.asks?.[0]?.price || 0;
   const spread = bestAsk - bestBid;
   const midPrice = (bestBid + bestAsk) / 2;
   

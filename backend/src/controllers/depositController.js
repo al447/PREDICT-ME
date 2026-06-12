@@ -133,8 +133,40 @@ const claimDeposit = async (req, res, next) => {
       });
     }
 
-    // Atomic credit + record creation (use verified chain in case auto-detect changed it)
     const verifiedChain = verification.chain || chain;
+
+    // ── Non-custodial (on-chain) mode guard ───────────────────────────────────
+    // When ONCHAIN_ENABLED=true, User.balance is a read-only mirror of the user's
+    // on-chain proxy USDC balance (balanceSyncService overwrites it every cycle).
+    // Manually-claimed deposits land at the intake/platform address, NOT the user's
+    // proxy, so a $inc here would be erased by the next sync and would credit funds
+    // the user cannot actually trade. Record the deposit as pending for sweep to the
+    // proxy instead of mutating the chain-mirrored balance.
+    if (process.env.ONCHAIN_ENABLED === 'true') {
+      const pending = await PendingDeposit.create({
+        user: req.user._id,
+        chain: verifiedChain,
+        token,
+        txHash: normalizedTxHash,
+        claimedAmountUsd: verification.amount,
+        sender: verification.sender,
+        status: 'pending',
+        creditedAmountUsd,
+        source: 'auto-verified',
+        reviewedAt: new Date(),
+        notes: `On-chain mode: verified deposit (${verifiedChain}, block ${verification.blockNumber}) to intake address. Sweep to user proxy required before crediting (balance is chain-mirrored).`,
+      });
+      return res.json({
+        success: true,
+        deposit: pending,
+        autoCredited: false,
+        pendingSweep: true,
+        creditedAmountUsd,
+        message: `Deposit verified (${verification.amount} ${token}). Funds will be credited once swept to your on-chain wallet.`,
+      });
+    }
+
+    // Atomic credit + record creation (use verified chain in case auto-detect changed it)
     const deposit = await PendingDeposit.create({
       user: req.user._id,
       chain: verifiedChain,
@@ -392,7 +424,6 @@ const moonpaySession = async (req, res, next) => {
       baseCurrencyAmount: parseFloat(amountUsd),
       paymentMethod,
       environment: process.env.MOONPAY_ENV === 'live' ? 'production' : 'sandbox',
-      apiKey: process.env.MOONPAY_API_KEY,
     });
   } catch (err) {
     next(err);
@@ -404,12 +435,30 @@ const moonpaySession = async (req, res, next) => {
    Body: { url }
    Signs an arbitrary MoonPay widget URL via HMAC-SHA256 for onUrlSignature callback.
 ───────────────────────────────────────────── */
+const MOONPAY_ALLOWED_DOMAINS = [
+  'buy.moonpay.com',
+  'buy-sandbox.moonpay.com',
+  'sell.moonpay.com',
+  'sell-sandbox.moonpay.com',
+];
+
 const moonpaySignUrl = async (req, res, next) => {
   try {
     const { url } = req.body;
     if (!url || typeof url !== 'string') {
       return res.status(400).json({ success: false, error: 'url is required' });
     }
+
+    // Security: only sign URLs for legitimate MoonPay domains
+    try {
+      const parsed = new URL(url);
+      if (!MOONPAY_ALLOWED_DOMAINS.includes(parsed.hostname)) {
+        return res.status(400).json({ success: false, error: 'URL domain not allowed for signing' });
+      }
+    } catch {
+      return res.status(400).json({ success: false, error: 'Invalid URL format' });
+    }
+
     const signature = moonpay.signWidgetUrl(url);
     res.json({ success: true, signature });
   } catch (err) {
@@ -547,7 +596,7 @@ const moonpayWebhook = async (req, res, next) => {
     deposit.providerStatus = data.status;
     deposit.providerPayload = payload;
 
-    // On completion, credit user balance
+    // On completion, credit user balance — idempotent via atomic status transition
     if (data.status === 'completed' && deposit.status !== 'credited') {
       const usdcAmount = data.quoteCurrencyAmount || deposit.claimedAmountUsd;
       if (!usdcAmount || usdcAmount <= 0) {
@@ -555,11 +604,23 @@ const moonpayWebhook = async (req, res, next) => {
         await deposit.save();
         return res.json({ received: true, matched: true, credited: false });
       }
+
+      // Atomic guard: only credit if status is still 'pending' (prevents double-credit race)
+      const creditResult = await PendingDeposit.findOneAndUpdate(
+        { _id: deposit._id, status: { $ne: 'credited' } },
+        { status: 'credited', creditedAmountUsd: usdcAmount, reviewedAt: new Date(), providerStatus: data.status, providerPayload: payload },
+        { new: true }
+      );
+      if (!creditResult) {
+        console.log('[MoonPayWebhook] Already credited, skipping duplicate');
+        return res.json({ received: true, matched: true, credited: true });
+      }
+
       deposit.creditedAmountUsd = usdcAmount;
       deposit.status = 'credited';
       deposit.reviewedAt = new Date();
 
-      // Credit user balance atomically
+      // Credit user balance
       await User.findByIdAndUpdate(deposit.user, {
         $inc: { balance: usdcAmount },
       });

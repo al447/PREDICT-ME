@@ -51,7 +51,7 @@ const AdminReferralDashboard = () => {
       const res = await adminReferralAPI.listReferrals({ 
         page, 
         limit: 20,
-        search: searchTerm 
+        q: searchTerm 
       });
       setReferrals(res.data.referrals || []);
       setTotalPages(res.data.pages || 1);

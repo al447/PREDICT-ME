@@ -150,6 +150,8 @@ const balanceSyncService = require('./services/balanceSyncService');
 const proxyDepositWatcher   = require('./services/proxyDepositWatcher');
 const depositWatcherService = require('./services/depositWatcherService');
 const { startBridgeCompletionPoller } = require('./services/sweepService');
+const priceAlertCron = require('./services/priceAlertCronService');
+const { startWithdrawalPoller } = require('./services/withdrawService');
 
 // Hourly cron job: snapshot all active market prices for transparent chart history
 const HOURLY_MS = 60 * 60 * 1000;
@@ -292,6 +294,9 @@ connectDB()
       depositWatcherService.start();
       startBridgeCompletionPoller();
     }
+    // Start price alert checker and withdrawal completion poller
+    priceAlertCron.start();
+    startWithdrawalPoller();
 
     
     // ── Phase 1: Operator self-check + Maker Bot auto-start ────────────────

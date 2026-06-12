@@ -22,7 +22,7 @@ const across = require('./bridgeProviders/acrossProvider');
 const cctp = require('./bridgeProviders/cctpProvider');
 const relay = require('./bridgeProviders/relayProvider');
 const debridge = require('./bridgeProviders/debridgeProvider');
-const { ensureSolanaGas } = require('./bridgeGasFunder');
+const { ensureSolanaGas, ensureEvmGas } = require('./bridgeGasFunder');
 
 const SWEEP_ENABLED = process.env.BRIDGE_SWEEP_ENABLED === 'true';
 
@@ -121,6 +121,9 @@ async function sweepEvm(deposit, user) {
   const signer = getEvmSigner(user.depositIndex).connect(getProvider(sourceChainId));
   const amountBN = ethers.parseUnits(sourceAmount.toString(), 6); // USDC = 6 decimals
 
+  // Fund gas for the intake address before approve + deposit
+  await ensureEvmGas(intakeAddress, sourceChainId);
+
   // Get Across quote
   const quote = await across.getQuote({
     fromChainId: sourceChainId,
@@ -135,16 +138,25 @@ async function sweepEvm(deposit, user) {
     return { provider: 'across', txHash: null };
   }
 
-  // Build and send deposit tx to Across SpokePool
+  // Approve USDC spend for Across SpokePool before deposit
+  const usdcAddress = resolveUSDCAddress(sourceChainId);
+  const ERC20_ABI = ['function approve(address spender, uint256 amount) returns (bool)'];
+  const usdcContract = new ethers.Contract(usdcAddress, ERC20_ABI, signer);
+
   const calldata = await across.buildDepositCalldata({
     fromChainId:     sourceChainId,
-    inputToken:      resolveUSDCAddress(sourceChainId),
+    inputToken:      usdcAddress,
     outputToken:     '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
     amount:          amountBN.toString(),
     recipient:       safeAddress,
     quoteTimestamp:  Math.floor(Date.now() / 1000),
   });
 
+  // Approve SpokePool to pull USDC from intake address
+  const approveTx = await usdcContract.approve(calldata.to, amountBN);
+  await approveTx.wait();
+
+  // Build and send deposit tx to Across SpokePool
   const tx = await signer.sendTransaction({
     to:    calldata.to,
     data:  calldata.data,
@@ -237,8 +249,12 @@ async function startBridgeCompletionPoller() {
 
       for (const dep of pending) {
         try {
-          // ── Mock mode ──────────────────────────────────────────────────
+          // ── Mock mode — ONLY for non-production / testnet environments ──
           if (!SWEEP_ENABLED) {
+            if (process.env.NODE_ENV === 'production' && !TESTNET_CHAIN_IDS.has(dep.sourceChainId)) {
+              console.warn(`[Sweep][Poller] BRIDGE_SWEEP_ENABLED=false in production — skipping mock credit for ${dep._id}`);
+              continue;
+            }
             let creditUsd;
             if (dep.bridgeProvider === 'cctp' || dep.chainType === 'svm') {
               creditUsd = dep.sourceAmount; // CCTP is 1:1

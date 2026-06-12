@@ -1,37 +1,55 @@
 import { create } from 'zustand';
 import { notificationAPI } from '../services/api';
 
-// Map notification type to icon
 const ICON_MAP = {
+  order_fill: '✅',
+  order_cancelled: '❌',
   trade: '📈',
+  market_resolved: '🏁',
+  position_won: '🏆',
+  position_lost: '📉',
+  position_refunded: '💵',
   deposit: '💰',
+  deposit_pending: '⏳',
   withdrawal: '💸',
+  withdrawal_pending: '⏳',
+  price_alert: '🔔',
+  price_movement: '📊',
+  whale_trade: '🐋',
+  market_closing: '⏰',
+  system: '📢',
+  welcome: '🎉',
+  referral: '🎁',
+  // Legacy
   market: '📊',
-  system: '🎉',
   price: '📉',
 };
 
-// Map notification type to default link
 const LINK_MAP = {
+  order_fill: '/portfolio',
   trade: '/portfolio',
+  market_resolved: '/',
+  position_won: '/portfolio',
+  position_lost: '/portfolio',
   deposit: '/deposit',
   withdrawal: '/withdraw',
-  market: '/',
+  price_alert: '/',
   system: '/',
-  price: '/portfolio',
+  welcome: '/',
+  referral: '/referral',
 };
 
-// Convert backend notification to frontend format
 const formatNotification = (n) => ({
-  id: n._id,
+  id: n._id || n.id,
   type: n.type,
   title: n.title,
   message: n.message,
-  timestamp: n.createdAt,
-  read: n.read,
-  icon: ICON_MAP[n.type] || '�',
-  link: n.data?.link || LINK_MAP[n.type] || '/',
+  timestamp: n.createdAt || n.timestamp,
+  read: n.read || false,
+  icon: ICON_MAP[n.type] || '🔔',
+  link: n.actionUrl || n.data?.link || LINK_MAP[n.type] || '/',
   data: n.data,
+  priority: n.priority || 'normal',
 });
 
 const useNotificationStore = create((set, get) => ({
@@ -40,19 +58,18 @@ const useNotificationStore = create((set, get) => ({
   isOpen: false,
   loading: false,
   error: null,
+  preferences: null,
+  preferencesLoading: false,
 
-  // Fetch notifications from API
   fetchNotifications: async (params = {}) => {
     try {
       set({ loading: true, error: null });
       const response = await notificationAPI.getNotifications(params);
-      
       if (response.data.success) {
-        const notifications = response.data.notifications.map(formatNotification);
-        set({ 
-          notifications, 
+        set({
+          notifications: response.data.notifications.map(formatNotification),
           unreadCount: response.data.unreadCount,
-          loading: false 
+          loading: false,
         });
       }
     } catch (error) {
@@ -61,7 +78,6 @@ const useNotificationStore = create((set, get) => ({
     }
   },
 
-  // Fetch unread count only
   fetchUnreadCount: async () => {
     try {
       const response = await notificationAPI.getUnreadCount();
@@ -80,7 +96,7 @@ const useNotificationStore = create((set, get) => ({
     try {
       await notificationAPI.markAsRead(id);
       set((s) => ({
-        notifications: s.notifications.map((n) => 
+        notifications: s.notifications.map((n) =>
           n.id === id ? { ...n, read: true } : n
         ),
         unreadCount: Math.max(0, s.unreadCount - 1),
@@ -107,8 +123,8 @@ const useNotificationStore = create((set, get) => ({
       await notificationAPI.deleteNotification(id);
       set((s) => ({
         notifications: s.notifications.filter((n) => n.id !== id),
-        unreadCount: s.notifications.find((n) => n.id === id && !n.read) 
-          ? Math.max(0, s.unreadCount - 1) 
+        unreadCount: s.notifications.find((n) => n.id === id && !n.read)
+          ? Math.max(0, s.unreadCount - 1)
           : s.unreadCount,
       }));
     } catch (error) {
@@ -116,21 +132,73 @@ const useNotificationStore = create((set, get) => ({
     }
   },
 
-  addNotification: (notification) =>
-    set((s) => ({
-      notifications: [
-        { 
-          ...notification, 
-          id: notification.id || `n_${Date.now()}`, 
-          timestamp: notification.timestamp || new Date().toISOString(), 
-          read: false 
-        },
-        ...s.notifications,
-      ],
-      unreadCount: s.unreadCount + 1,
-    })),
+  clearAll: async () => {
+    try {
+      await notificationAPI.clearAll();
+      set({ notifications: [], unreadCount: 0 });
+    } catch (error) {
+      console.error('Failed to clear all:', error);
+    }
+  },
 
-  clearAll: () => set({ notifications: [], unreadCount: 0 }),
+  // Real-time WebSocket notification handler
+  addNotification: (notification) => {
+    const formatted = formatNotification(notification);
+    set((s) => ({
+      notifications: [formatted, ...s.notifications].slice(0, 100),
+      unreadCount: s.unreadCount + 1,
+    }));
+  },
+
+  // Preferences
+  fetchPreferences: async () => {
+    try {
+      set({ preferencesLoading: true });
+      const response = await notificationAPI.getPreferences();
+      if (response.data.success) {
+        set({ preferences: response.data.preferences, preferencesLoading: false });
+      }
+    } catch (error) {
+      console.error('Failed to fetch preferences:', error);
+      set({ preferencesLoading: false });
+    }
+  },
+
+  updatePreferences: async (updates) => {
+    try {
+      const response = await notificationAPI.updatePreferences(updates);
+      if (response.data.success) {
+        set({ preferences: response.data.preferences });
+      }
+      return response.data;
+    } catch (error) {
+      console.error('Failed to update preferences:', error);
+      throw error;
+    }
+  },
+
+  // Price Alerts
+  addPriceAlert: async (data) => {
+    try {
+      const response = await notificationAPI.addPriceAlert(data);
+      if (response.data.success) {
+        await get().fetchPreferences();
+      }
+      return response.data;
+    } catch (error) {
+      console.error('Failed to add price alert:', error);
+      throw error;
+    }
+  },
+
+  removePriceAlert: async (alertId) => {
+    try {
+      await notificationAPI.removePriceAlert(alertId);
+      await get().fetchPreferences();
+    } catch (error) {
+      console.error('Failed to remove price alert:', error);
+    }
+  },
 }));
 
 export default useNotificationStore;

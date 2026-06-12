@@ -42,12 +42,21 @@ const SUPPORTED_CHAINS = [
  * Public — no auth required.
  */
 router.get('/supported-assets', (req, res) => {
+  // withdrawDebitAddress = the operator wallet the user's Safe is debited to
+  // (proxy → operator) before the operator bridges to the destination chain.
+  // The frontend uses it as the `recipient` when preparing/signing the Safe tx.
+  let withdrawDebitAddress = null;
+  try {
+    withdrawDebitAddress = require('../config/contracts').getOperatorAddress();
+  } catch { /* operator key not configured */ }
+
   res.json({
     success: true,
     chains: SUPPORTED_CHAINS,
     settlementToken: 'USDC',
     settlementChain: 'Polygon',
     settlementChainId: 137,
+    withdrawDebitAddress,
   });
 });
 
@@ -134,14 +143,18 @@ router.post('/quote', authenticate, async (req, res, next) => {
  */
 router.post('/withdraw', authenticate, withdrawLimiter, async (req, res, next) => {
   try {
-    const { fromAmountUsdc, toChainType, toChainId, toToken, recipientAddr, provider } = req.body;
+    const { fromAmountUsdc, toChainType, toChainId, toToken, recipientAddr, provider, userSignature } = req.body;
 
     if (!fromAmountUsdc || !toChainType || !recipientAddr) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
+    if (!userSignature) {
+      return res.status(400).json({ error: 'Missing userSignature — sign the Safe authorization to debit your wallet.' });
+    }
 
     const result = await executeWithdrawal(req.user._id.toString(), {
       fromAmountUsdc: parseFloat(fromAmountUsdc),
+      userSignature,
       toChainType,
       toChainId:      toChainId ? parseInt(toChainId) : null,
       toToken:        toToken || 'USDC',

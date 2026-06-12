@@ -115,7 +115,8 @@ const TradingPanel = ({ market, onMarketUpdate }) => {
       const tokenId = selectedOutcome === 'Yes' ? market.yesTokenId : market.noTokenId;
       const sideStr = side; // 'buy' | 'sell'
       const size = inputMode === 'shares' ? parsedShares : calculatedShares;
-      const price = orderType === 'limit' ? parsedLimitPrice : marketPrice;
+      // Limit price input is in cents (1-99); convert to decimal (0.01-0.99)
+      const price = orderType === 'limit' ? parsedLimitPrice / 100 : marketPrice;
 
       // Validate limit price
       if (orderType === 'limit' && (price < 0.01 || price > 0.99)) {
@@ -151,7 +152,7 @@ const TradingPanel = ({ market, onMarketUpdate }) => {
   const handleCancelOrder = async (orderId) => {
     if (!confirm('Cancel this order?')) return;
     try {
-      await cancelOrder.mutateAsync({ orderId, conditionId: market.conditionId });
+      await cancelOrder.mutateAsync(orderId);
       refreshOrders();
     } catch (err) {
       alert('Failed to cancel order: ' + err.message);
