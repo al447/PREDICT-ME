@@ -1,0 +1,103 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-bg: #0d0f14;
+  --color-surface: #1a1a2e;
+  --color-surface2: #16213e;
+  --color-border: #2a2d3e;
+  --color-text: #f0f0f0;
+  --color-text-muted: #a0a0b0;
+  --color-gold: #D4AF37;
+  --color-gold-light: #FFD700;
+  --color-green: #00c853;
+  --color-red: #ff1744;
+  /* Market card */
+  --color-card: #12141f;
+  --color-card-border: #23263a;
+  --color-card-border-hover: #3d4060;
+  /* Yes/No buttons — Polymarket dark style */
+  --color-btn-yes: #1a3a2a;
+  --color-btn-yes-hover: #1f4a33;
+  --color-btn-yes-text: #3fcf7a;
+  --color-btn-no: #3a1a1f;
+  --color-btn-no-hover: #4a1f25;
+  --color-btn-no-text: #f0545a;
+}
+
+.light {
+  --color-bg: #f5f5f5;
+  --color-surface: #ffffff;
+  --color-surface2: #f0f0f0;
+  --color-border: #e0e0e0;
+  --color-text: #111111;
+  --color-text-muted: #666666;
+  --color-gold: #c49a00;
+  --color-gold-light: #b8860b;
+  --color-green: #00a846;
+  --color-red: #d50000;
+  /* Market card */
+  --color-card: #ffffff;
+  --color-card-border: #e0e0e0;
+  --color-card-border-hover: #aaaaaa;
+  /* Yes/No buttons — light style */
+  --color-btn-yes: #dcf5e8;
+  --color-btn-yes-hover: #c2edda;
+  --color-btn-yes-text: #00843d;
+  --color-btn-no: #fde8e9;
+  --color-btn-no-hover: #fad0d2;
+  --color-btn-no-text: #c0001a;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  min-height: 100vh;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+
+.pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track { background: var(--color-bg); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
+
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}
+.light input[type="date"]::-webkit-calendar-picker-indicator,
+.light input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(0);
+}
+
+.text-gold { color: var(--color-gold); }
+.text-gold-light { color: var(--color-gold-light); }
+.text-green { color: var(--color-green); }
+.text-red { color: var(--color-red); }
+.bg-surface { background-color: var(--color-surface); }
+.bg-surface2 { background-color: var(--color-surface2); }
+.border-custom { border-color: var(--color-border); }
+.text-muted { color: var(--color-text-muted); }

@@ -1,0 +1,20 @@
+﻿powershell : =eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2YTIzMDMzNGNmNzJjZmM3OGU2NTcyZDQiLCJyb2xlIjoiYWRtaW4iLCJpYXQiOjE3ODA5ODQzMDcsImV4cCI6MTc4MTU4OTEwN30.amJRaxnIdlcCL0VxOFVtTv8SvtO4c6-0uEImuAG6y4Y : The term 
+At line:1 char:1
++ powershell -NoProfile -Command "& {cd h:\PredictMe; $env:ADMIN_TOKEN= ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (=eyJhbGciOiJIUz...y4Y : The term :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+'=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2YTIzMDMzNGNmNzJjZmM3OGU2NTcyZDQiLCJyb2xlIjoiYWRtaW4iLCJpYXQiOjE3ODA5ODQzMDcsImV4cCI6MTc4MTU4OTEwN30.amJRaxnIdlcCL0VxOFVtTv8SvtO4c6-0uEImuAG6y4Y' is not recognized as the name of a cmdlet, 
+function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+At line:1 char:21
++ ... \PredictMe; ='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2YT ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (=eyJhbGciOiJIUz...c6-0uEImuAG6y4Y:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+ 
+Γ¥î Please set your ADMIN_TOKEN in this script or via env var
+   Get token from: Login to admin panel ΓåÆ check localStorage or network tab
+---
+Γ¥î Please set your ADMIN_TOKEN in this script or via env var
+   Get token from: Login to admin panel ΓåÆ check localStorage or network tab

@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: predictme-api
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install --legacy-peer-deps
+    startCommand: node --max-old-space-size=400 src/server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=400
+      - key: PORT
+        value: 10000
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: CLIENT_URL
+        value: https://predictme-live.vercel.app
+      - key: FRONTEND_URL
+        value: https://predictme-live.vercel.app
+      - key: ALLOWED_ORIGINS
+        value: https://predictme-live.vercel.app,https://predictme-staging.vercel.app,http://localhost:5173,http://localhost:5174,http://localhost:3000
+      - key: MAGIC_SECRET_KEY
+        sync: false
+      - key: MOONPAY_SECRET_KEY
+        sync: false
+      - key: ALCHEMY_API_KEY
+        sync: false
+      - key: UMA_API_KEY
+        sync: false
+      - key: POLYMARKET_API_KEY
+        sync: false
+      - key: WEB3_STORAGE_TOKEN
+        sync: false
+      - key: PINATA_JWT
+        sync: false

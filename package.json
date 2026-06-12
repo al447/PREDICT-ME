@@ -1,0 +1,31 @@
+{
+  "name": "polybet365",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "dev:backend": "npm run dev --workspace=backend",
+    "build:frontend": "npm run build --workspace=frontend",
+    "seed": "npm run seed --workspace=backend",
+    "seed:admin": "npm run seed:admin --workspace=backend",
+    "reset:db": "npm run reset --workspace=backend"
+  },
+  "overrides": {
+    "ethers": "^6.13.0",
+    "@ambire/signature-validator": {
+      "ethers": "^5.7.2"
+    }
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "devDependencies": {
+    "localtunnel": "^2.0.2",
+    "ngrok": "^5.0.0-beta.2"
+  }
+}

@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Ping health endpoint
         run: |
-          URL="https://polybet365-api-live.onrender.com/api/health"
+          URL="https://predictme-api.onrender.com/api/health"
           echo "Pinging $URL"
           for i in 1 2 3; do
             code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$URL" || echo "000")
