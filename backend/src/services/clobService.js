@@ -15,10 +15,10 @@ const websocketService = require('./websocketService');
 const clobPriceService = require('./clobPriceService');
 const balanceSyncService = require('./balanceSyncService');
 const notificationService = require('./notificationService');
-const { ADDRESSES, ABIS, RPC_URL, CHAIN_ID, getOperatorKey } = require('../config/contracts');
+const { ADDRESSES, ABIS, RPC_URL, CHAIN_ID, getOperatorKey, getPolygonProvider } = require('../config/contracts');
 
 // EIP-712 Domain — MUST match the deployed CTFExchange.domainSeparator().
-// Verified on-chain (Polygon Amoy): name='Polymarket CTF Exchange', version='1'.
+// Verified on-chain (Polygon Mainnet): name='Polymarket CTF Exchange', version='1'.
 // Any other name causes both off-chain verification and on-chain fillOrder/matchOrders to reject signatures.
 const ORDER_DOMAIN = {
   name: 'Polymarket CTF Exchange',
@@ -156,20 +156,24 @@ async function createOrder(orderData) {
 }
 
 /**
- * Calculate price from maker/taker amounts
- * Side 0 (buy): price = takerAmount / makerAmount
- * Side 1 (sell): price = makerAmount / takerAmount
+ * Calculate price from maker/taker amounts.
+ * Price is always USDC-per-share (0.01–0.99).
+ *
+ * Side 0 (buy):  makerAmount = USDC offered,  takerAmount = shares wanted
+ *                price = makerAmount / takerAmount  (USDC per share)
+ * Side 1 (sell): makerAmount = shares offered, takerAmount = USDC wanted
+ *                price = takerAmount / makerAmount  (USDC per share)
  */
 function calculatePrice(makerAmount, takerAmount, side) {
   const maker = parseFloat(ethers.formatUnits(makerAmount, 6));
   const taker = parseFloat(ethers.formatUnits(takerAmount, 6));
   
   if (side === 0) {
-    // Buy: maker pays USDC for outcome tokens
-    return taker / maker;
-  } else {
-    // Sell: maker sells outcome tokens for USDC
+    // Buy: maker pays USDC (makerAmount) for shares (takerAmount)
     return maker / taker;
+  } else {
+    // Sell: maker offers shares (makerAmount), wants USDC (takerAmount)
+    return taker / maker;
   }
 }
 
@@ -289,8 +293,7 @@ async function revertMatches(matches, takerOrder) {
 let _operatorWallet = null;
 function getOperatorWallet() {
   if (!_operatorWallet) {
-    const provider = new ethers.JsonRpcProvider(RPC_URL);
-    _operatorWallet = new ethers.Wallet(getOperatorKey(), provider);
+    _operatorWallet = new ethers.Wallet(getOperatorKey(), getPolygonProvider());
   }
   return _operatorWallet;
 }

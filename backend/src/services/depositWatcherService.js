@@ -24,20 +24,45 @@ const { processDeposit } = require('./sweepService');
 const POLL_INTERVAL_MS  = parseInt(process.env.BRIDGE_WATCHER_POLL_MS  || '30000');  // 30 s
 const BTC_POLL_INTERVAL = parseInt(process.env.BRIDGE_WATCHER_BTC_POLL || '60000');  // 60 s
 
+// Max blocks per getLogs request per chain — public RPCs enforce hard limits.
+// BSC public: ~272 blocks. Others are more generous but cap conservatively.
+const MAX_BLOCKS_PER_QUERY = {
+  1:     2000,  // Ethereum
+  // BSC removed — Across SpokePool not available, sweeps would fail
+  137:   2000,  // Polygon
+  8453:  2000,  // Base
+  42161: 2000,  // Arbitrum
+  10:    2000,  // Optimism
+  // Avalanche removed — not in Polymarket's supported chains
+  11155111: 2000, // Sepolia
+};
+const DEFAULT_MAX_BLOCKS = 500; // fallback for unlisted chains
+
+// How many blocks back to start from on first boot (avoids huge catchup queries).
+// At 3s/block on BSC: 600 blocks ≈ 30 minutes of history.
+const STARTUP_LOOKBACK_BLOCKS = {
+  1:     150,   // ~30 min at 12s/block
+  56:    600,   // ~30 min at 3s/block
+  137:   900,   // ~30 min at 2s/block
+  8453:  900,
+  42161: 7200,  // ~30 min at 0.25s/block
+  10:    900,
+  43114: 900,
+  11155111: 150,
+};
+const DEFAULT_LOOKBACK = 300;
+
 const USDC_BY_CHAIN = {
-  1:     { addr: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', rpc: process.env.ETH_RPC_URL    || 'https://eth.llamarpc.com'    },
-  8453:  { addr: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', rpc: process.env.BASE_RPC_URL   || 'https://mainnet.base.org'    },
-  42161: { addr: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', rpc: process.env.ARB_RPC_URL    || 'https://arb1.arbitrum.io/rpc' },
-  10:    { addr: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85', rpc: process.env.OP_RPC_URL     || 'https://mainnet.optimism.io' },
-  43114: { addr: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E', rpc: process.env.AVAX_RPC_URL   || 'https://api.avax.network/ext/bc/C/rpc' },
-  137:   { addr: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', rpc: process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com' },
-  56:    { addr: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', rpc: process.env.BSC_RPC_URL    || 'https://bsc-dataseed.binance.org' },
+  1:     { addr: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', rpcs: [process.env.ETH_RPC_URL,    'https://ethereum-rpc.publicnode.com',           'https://eth.llamarpc.com',             'https://rpc.ankr.com/eth'       ].filter(Boolean) },
+  8453:  { addr: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', rpcs: [process.env.BASE_RPC_URL,   'https://mainnet.base.org',                      'https://base.llamarpc.com',            'https://rpc.ankr.com/base'      ].filter(Boolean) },
+  42161: { addr: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', rpcs: [process.env.ARB_RPC_URL,    'https://arb1.arbitrum.io/rpc',                  'https://arbitrum-one-rpc.publicnode.com', 'https://rpc.ankr.com/arbitrum'  ].filter(Boolean) },
+  10:    { addr: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85', rpcs: [process.env.OP_RPC_URL,     'https://mainnet.optimism.io',                   'https://optimism.llamarpc.com',        'https://rpc.ankr.com/optimism'  ].filter(Boolean) },
+  // Avalanche removed — no Across SpokePool for sweep
+  137:   { addr: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', rpcs: [process.env.POLYGON_RPC_URL, 'https://polygon-bor-rpc.publicnode.com',         'https://polygon.llamarpc.com',         'https://rpc.ankr.com/polygon'   ].filter(Boolean) },
+  // BSC removed — no Across SpokePool available for sweep
 };
 
-// Testnet chains (enable when testing)
-const TESTNET_CHAINS = process.env.ENABLE_TESTNET_WATCHER === 'true' ? {
-  11155111: { addr: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', rpc: process.env.SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com' }, // Sepolia USDC
-} : {};
+// Testnet chains removed — mainnet only
 
 const SOLANA_RPC  = process.env.SOLANA_RPC_URL  || 'https://api.mainnet-beta.solana.com';
 const BTC_API_URL = process.env.BTC_API_URL     || 'https://mempool.space/api';
@@ -59,15 +84,7 @@ async function start() {
     );
   }
 
-  // Launch testnet watchers if enabled
-  if (process.env.ENABLE_TESTNET_WATCHER === 'true') {
-    for (const [chainId] of Object.entries(TESTNET_CHAINS)) {
-      console.log(`[DepositWatcher] Starting testnet watcher for chain ${chainId}`);
-      watchEvmChain(parseInt(chainId), true).catch(err =>
-        console.error(`[DepositWatcher][Testnet:${chainId}] Fatal error:`, err.message)
-      );
-    }
-  }
+  // Testnet watchers removed — mainnet only
 
   // Solana watcher
   watchSolana().catch(err =>
@@ -82,20 +99,41 @@ async function start() {
 
 // ── EVM watcher ───────────────────────────────────────────────────────────────
 
-async function watchEvmChain(chainId, isTestnet = false) {
-  const chainConfig = isTestnet ? TESTNET_CHAINS[chainId] : USDC_BY_CHAIN[chainId];
+function isTransientRpcError(err) {
+  const msg = (err?.message || '') + (err?.info?.responseBody || '') + (err?.info?.responseStatus || '');
+  return (
+    msg.includes('500') ||
+    msg.includes('SERVER_ERROR') ||
+    msg.includes('502') ||
+    msg.includes('503') ||
+    msg.includes('429') ||
+    msg.includes('rate limit') ||
+    msg.includes('Rate limit') ||
+    msg.includes('Too Many Requests') ||
+    msg.includes('ETIMEDOUT') ||
+    msg.includes('ECONNREFUSED') ||
+    msg.includes('ECONNRESET')
+  );
+}
+
+async function watchEvmChain(chainId) {
+  const chainConfig = USDC_BY_CHAIN[chainId];
   if (!chainConfig) {
     console.error(`[DepositWatcher][EVM:${chainId}] No chain config found`);
     return;
   }
-  const { addr: usdcAddr, rpc } = chainConfig;
-  const provider = new ethers.JsonRpcProvider(rpc);
+  const { addr: usdcAddr, rpcs } = chainConfig;
+  const { createProvider } = require('../config/contracts');
+  let rpcIndex = 0;
+  let provider = createProvider(rpcs[rpcIndex], chainId);
   const erc20Iface = new ethers.Interface([
     'event Transfer(address indexed from, address indexed to, uint256 value)',
   ]);
 
-  let lastBlock = await provider.getBlockNumber() - 1;
-  console.log(`[DepositWatcher][EVM:${chainId}] Starting from block ${lastBlock}`);
+  const currentBlockOnStart = await provider.getBlockNumber();
+  const lookback = STARTUP_LOOKBACK_BLOCKS[chainId] ?? DEFAULT_LOOKBACK;
+  let lastBlock = currentBlockOnStart - lookback;
+  console.log(`[DepositWatcher][EVM:${chainId}] Starting from block ${lastBlock} (lookback ${lookback} blocks)`);
 
   while (_running) {
     try {
@@ -108,23 +146,39 @@ async function watchEvmChain(chainId, isTestnet = false) {
       // Build address→user map for this poll cycle
       const addrMap = await buildEvmAddressMap();
       if (addrMap.size === 0) {
+        lastBlock = currentBlock; // advance so blocks don't accumulate when no users exist
         await sleep(POLL_INTERVAL_MS);
         continue;
       }
 
-      // Query Transfer events to any intake address
-      const filter = {
-        address: usdcAddr,
-        fromBlock: lastBlock + 1,
-        toBlock:   currentBlock,
-        topics: [
-          ethers.id('Transfer(address,address,uint256)'),
-          null,
-          [...addrMap.keys()].map(a => ethers.zeroPadValue(a.toLowerCase(), 32)),
-        ],
-      };
+      // Query Transfer events in chunks to respect RPC getLogs block-range limits.
+      const maxChunk = MAX_BLOCKS_PER_QUERY[chainId] ?? DEFAULT_MAX_BLOCKS;
+      const topics = [
+        ethers.id('Transfer(address,address,uint256)'),
+        null,
+        [...addrMap.keys()].map(a => ethers.zeroPadValue(a.toLowerCase(), 32)),
+      ];
 
-      const logs = await provider.getLogs(filter);
+      // Fetch all chunks — if ANY chunk fails we throw so lastBlock is NOT advanced
+      // and the entire range is retried next poll cycle (idempotent via sourceTxHash).
+      let chunkFrom = lastBlock + 1;
+      const logs = [];
+      while (chunkFrom <= currentBlock) {
+        const chunkTo = Math.min(chunkFrom + maxChunk - 1, currentBlock);
+        const chunk = await provider.getLogs({
+          address:   usdcAddr,
+          fromBlock: chunkFrom,
+          toBlock:   chunkTo,
+          topics,
+        });
+        logs.push(...chunk);
+        chunkFrom = chunkTo + 1;
+        if (chunkFrom <= currentBlock) await sleep(200); // brief pause between chunks
+      }
+
+      // All chunks succeeded — process logs then advance lastBlock.
+      // lastBlock is only updated here, AFTER all getLogs calls complete,
+      // so a mid-loop RPC error causes a full retry next poll (no blocks skipped).
       for (const log of logs) {
         const parsed = erc20Iface.parseLog(log);
         const toAddr  = parsed.args.to.toLowerCase();
@@ -145,9 +199,18 @@ async function watchEvmChain(chainId, isTestnet = false) {
         });
       }
 
-      lastBlock = currentBlock;
+      lastBlock = currentBlock; // advance only after full success
     } catch (err) {
-      console.error(`[DepositWatcher][EVM:${chainId}] Poll error:`, err.message);
+      // lastBlock is NOT updated on error — next poll retries the same range.
+      // onDepositDetected is idempotent (deduped by sourceTxHash) so re-processing
+      // already-seen logs on retry is safe.
+      if (isTransientRpcError(err) && rpcs.length > 1) {
+        rpcIndex = (rpcIndex + 1) % rpcs.length;
+        provider = createProvider(rpcs[rpcIndex], chainId);
+        console.warn(`[DepositWatcher][EVM:${chainId}] Transient RPC error — rotated to fallback ${rpcIndex} (${rpcs[rpcIndex]})`);
+      } else {
+        console.error(`[DepositWatcher][EVM:${chainId}] Poll error (will retry same range):`, err.message);
+      }
     }
 
     await sleep(POLL_INTERVAL_MS);

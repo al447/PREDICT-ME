@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Search, TrendingUp, TrendingDown, Wallet, ArrowUpRight, ArrowDownRight, DollarSign, Clock, Filter } from 'lucide-react';
 import useDepositModalStore from '../store/depositModalStore';
 import PendingDepositsCard from '../components/deposit/PendingDepositsCard';
+import RedeemPositions from '../components/portfolio/RedeemPositions';
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import Layout from '../components/layout/Layout';
 import useAuthStore from '../store/authStore';
@@ -105,21 +106,24 @@ const PortfolioPage = () => {
               <ArrowUpRight className="w-4 h-4" />
               Deposit
             </button>
-            {/* <Link
+            <Link
               to="/withdraw"
               className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-[var(--color-surface2)] text-[var(--color-text)] text-sm font-medium border border-[var(--color-border)] hover:bg-[var(--color-border)]/50 transition-colors"
             >
               <ArrowDownRight className="w-4 h-4" />
               Withdraw
-            </Link> */}
+            </Link>
           </div>
         </div>
 
+        {/* ── Redeem Winnings ── */}
+        <RedeemPositions />
+
         {/* ── P&L Chart ── */}
         <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-4 mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-[var(--color-text)]">Profit/Loss</h2>
-            <div className="flex gap-0.5 bg-[var(--color-surface2)] rounded-lg p-0.5 border border-[var(--color-border)]">
+          <div className="flex items-center justify-between mb-4 gap-2">
+            <h2 className="text-base font-semibold text-[var(--color-text)] flex-shrink-0">Profit/Loss</h2>
+            <div className="flex gap-0.5 bg-[var(--color-surface2)] rounded-lg p-0.5 border border-[var(--color-border)] overflow-x-auto">
               {PNL_RANGES.map(r => (
                 <button
                   key={r}
@@ -210,36 +214,52 @@ const PortfolioPage = () => {
             ) : (
               filtered.map((pos, idx) => (
                 <Link
-                  key={`${pos.market?._id}-${pos.outcome}`}
+                  key={`${pos.market?._id}-${pos.candidate || 'na'}-${pos.outcome}`}
                   to={`/market/${pos.market?.slug}`}
-                  className={`grid grid-cols-1 md:grid-cols-[1fr_80px_80px_80px_80px_80px] gap-2 px-4 py-3.5 hover:bg-[var(--color-surface2)] transition-colors items-center ${
+                  className={`block px-4 py-3.5 hover:bg-[var(--color-surface2)] transition-colors ${
                     idx < filtered.length - 1 ? 'border-b border-[var(--color-border)]' : ''
                   }`}
                 >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${pos.outcome?.toLowerCase() === 'yes' ? 'bg-emerald-400' : 'bg-red-400'}`} />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-[var(--color-text)] truncate">{pos.market?.title}</p>
-                      <p className="text-xs text-[var(--color-text-muted)]">{pos.outcome} · {pos.totalShares} shares</p>
+                  {/* Desktop grid layout */}
+                  <div className="hidden md:grid grid-cols-[1fr_80px_80px_80px_80px_80px] gap-2 items-center">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${pos.outcome?.toLowerCase() === 'yes' ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-[var(--color-text)] truncate">{pos.market?.title}</p>
+                        <p className="text-xs text-[var(--color-text-muted)]">{pos.candidate ? `${pos.candidate} ` : ''}{pos.outcome} · {pos.totalShares} shares</p>
+                      </div>
+                    </div>
+                    <div className="text-right text-sm text-[var(--color-text)]">{pos.avgPrice?.toFixed(1)}¢</div>
+                    <div className="text-right text-sm text-[var(--color-text)]">{pos.currentPrice?.toFixed(1)}¢</div>
+                    <div className="text-right text-sm text-[var(--color-text)]">{formatBalance(pos.totalAmount || 0)}</div>
+                    <div className="text-right text-sm text-[var(--color-text)]">{formatBalance(pos.totalShares || 0)}</div>
+                    <div className="text-right">
+                      <p className="text-sm font-semibold text-[var(--color-text)]">{formatBalance(pos.currentValue || 0)}</p>
+                      <p className={`text-xs ${(pos.pnl || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {(pos.pnl || 0) >= 0 ? '+' : ''}{formatBalance(pos.pnl || 0)}
+                      </p>
                     </div>
                   </div>
-                  <div className="hidden md:block text-right text-sm text-[var(--color-text)]">
-                    {pos.avgPrice?.toFixed(1)}¢
-                  </div>
-                  <div className="hidden md:block text-right text-sm text-[var(--color-text)]">
-                    {pos.currentPrice?.toFixed(1)}¢
-                  </div>
-                  <div className="hidden md:block text-right text-sm text-[var(--color-text)]">
-                    {formatBalance(pos.totalAmount || 0)}
-                  </div>
-                  <div className="hidden md:block text-right text-sm text-[var(--color-text)]">
-                    {formatBalance(pos.totalShares || 0)}
-                  </div>
-                  <div className="hidden md:block text-right">
-                    <p className="text-sm font-semibold text-[var(--color-text)]">{formatBalance(pos.currentValue || 0)}</p>
-                    <p className={`text-xs ${(pos.pnl || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {(pos.pnl || 0) >= 0 ? '+' : ''}{formatBalance(pos.pnl || 0)}
-                    </p>
+                  {/* Mobile card layout */}
+                  <div className="md:hidden">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${pos.outcome?.toLowerCase() === 'yes' ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                        <p className="text-sm font-medium text-[var(--color-text)] truncate">{pos.market?.title}</p>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-sm font-semibold text-[var(--color-text)]">{formatBalance(pos.currentValue || 0)}</p>
+                        <p className={`text-xs ${(pos.pnl || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {(pos.pnl || 0) >= 0 ? '+' : ''}{formatBalance(pos.pnl || 0)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 mt-1.5 ml-4 text-xs text-[var(--color-text-muted)]">
+                      <span>{pos.candidate ? `${pos.candidate} ` : ''}{pos.outcome}</span>
+                      <span>{pos.totalShares} shares</span>
+                      <span>Avg {pos.avgPrice?.toFixed(1)}¢</span>
+                      <span>Now {pos.currentPrice?.toFixed(1)}¢</span>
+                    </div>
                   </div>
                 </Link>
               ))

@@ -2,14 +2,14 @@
 
 This subgraph indexes the PolyBet365 M1 on-chain stack for fast GraphQL queries.
 
-## Deployed Contracts (Polygon Amoy)
+## Deployed Contracts (Polygon MAINNET, chainId 137 — deployed 2026-06-17, block 88660117)
 
 | Contract | Address | Purpose |
 |----------|---------|---------|
-| MarketFactory | `0x14f5b9db28c1af09726cf0ca327652303565ae0e` | Market creation |
-| CTFExchange | `0x8CbA3487e88e19d5aA6A3C78Cc93d06Dc0801eBF` | Trade matching |
-| ConditionalTokens | `0x688d809494D56aCD8ea8b252937e9b51F7F8111B` | Position tokens |
-| UmaCtfAdapter | `0xd414d992a493470b0bf833a2f4817b1b88a15b4b` | UMA resolution |
+| MarketFactory | `0x0e9Be76713060ae72bF4a431a79DE4e4342703Dd` | Market creation |
+| CTFExchange | `0xB2FB436cC2E6F5c8F2cb9a876FF4AF0CfDF2D8D8` | Trade matching |
+| ConditionalTokens | `0x4518a86c85F3D0aE6ac100B9384011bba63a9b1c` | Position tokens |
+| UmaCtfAdapter | `0x78E4B65e23cAD525851F32A1FF19320dE1Df73f7` | UMA resolution |
 
 ## Prerequisites
 

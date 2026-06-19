@@ -1,7 +1,8 @@
 import axios from 'axios';
+import api from './api'; // Default api instance for public endpoints
 
 const _depositBase = axios.create({
-  baseURL: (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000') + '/api/deposits',
+  baseURL: import.meta.env.VITE_BACKEND_URL ? import.meta.env.VITE_BACKEND_URL + '/api/deposits' : '/api/deposits',
   timeout: 30000,
 });
 _depositBase.interceptors.request.use((config) => {
@@ -11,7 +12,7 @@ _depositBase.interceptors.request.use((config) => {
 });
 
 const adminApi = axios.create({
-  baseURL: (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000') + '/api/admin',
+  baseURL: import.meta.env.VITE_BACKEND_URL ? import.meta.env.VITE_BACKEND_URL + '/api/admin' : '/api/admin',
   timeout: 30000,
 });
 
@@ -49,7 +50,7 @@ export const adminMarketsAPI = {
   update: (id, data) => adminApi.patch(`/markets/${id}`, data),
   close: (id) => adminApi.post(`/markets/${id}/close`),
   reopen: (id) => adminApi.post(`/markets/${id}/reopen`),
-  resolve: (id, outcome) => adminApi.post(`/markets/${id}/resolve`, { outcome }),
+  resolve: (id, data) => adminApi.post(`/markets/${id}/resolve`, typeof data === 'string' ? { outcome: data } : data),
   remove: (id) => adminApi.delete(`/markets/${id}`),
 };
 
@@ -76,6 +77,10 @@ export const adminDashboardAPI = {
   recentActivity: (limit = 20) => adminApi.get('/dashboard/recent-activity', { params: { limit } }),
   trending: (limit = 10) => adminApi.get('/dashboard/trending-markets', { params: { limit } }),
   auditLog: (params) => adminApi.get('/dashboard/audit-log', { params }),
+  pendingStats: () => {
+    const token = localStorage.getItem('pb365_admin_token');
+    return api.get('/markets/admin/pending-stats', { headers: { Authorization: `Bearer ${token}` } });
+  },
 };
 
 export const adminReferralAPI = {

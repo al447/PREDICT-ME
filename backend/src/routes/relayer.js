@@ -206,12 +206,11 @@ router.post(
  */
 router.get('/gas-prices', asyncHandler(async (req, res) => {
   const { ethers } = require('ethers');
-  const provider = new ethers.JsonRpcProvider(
-    process.env.POLYGON_AMOY_RPC_URL || 'https://polygon-amoy-bor-rpc.publicnode.com'
-  );
-  
+  const { RPC_URL } = require('../config/contracts');
+  const provider = new ethers.JsonRpcProvider(RPC_URL);
+
   const feeData = await provider.getFeeData();
-  
+
   res.json({
     success: true,
     gasPrices: {

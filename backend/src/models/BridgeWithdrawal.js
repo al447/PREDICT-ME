@@ -18,7 +18,7 @@ const bridgeWithdrawalSchema = new mongoose.Schema(
     quoteId:        { type: String, default: null },          // provider quote reference
     status: {
       type: String,
-      enum: ['pending', 'bridging', 'completed', 'failed'],
+      enum: ['pending', 'bridging', 'completed', 'failed', 'requires_attention'],
       default: 'pending',
       index: true,
     },

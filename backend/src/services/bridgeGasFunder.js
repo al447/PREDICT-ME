@@ -50,7 +50,11 @@ async function ensureSolanaGas(intakePubkeyStr, minLamports) {
   // Need to top up
   const operatorSecret = CCTP_CONFIG.solanaOperatorSecret;
   if (!operatorSecret) {
-    throw new Error('[GasFunder] SOLANA_OPERATOR_SECRET not configured — cannot fund intake gas');
+    // Non-fatal: warn and skip. Deposit stays in 'detected' for retry once key is set.
+    console.warn('[GasFunder] SOLANA_OPERATOR_SECRET not set — skipping SOL gas top-up. Set the key in Render Dashboard to enable Solana CCTP sweeps.');
+    const err = new Error('[GasFunder] SOLANA_OPERATOR_SECRET not configured');
+    err.retryable = true;
+    throw err;
   }
 
   const operatorKeypair = Keypair.fromSecretKey(bs58.decode(operatorSecret));
@@ -95,19 +99,20 @@ async function ensureEvmGas(intakeAddress, chainId) {
   const { getOperatorKey } = require('../config/contracts');
 
   const RPC_URLS = {
-    1:     process.env.ETH_RPC_URL    || 'https://eth.llamarpc.com',
-    8453:  process.env.BASE_RPC_URL   || 'https://mainnet.base.org',
-    42161: process.env.ARB_RPC_URL    || 'https://arb1.arbitrum.io/rpc',
-    10:    process.env.OP_RPC_URL     || 'https://mainnet.optimism.io',
-    43114: process.env.AVAX_RPC_URL   || 'https://api.avax.network/ext/bc/C/rpc',
-    137:   process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com',
+    1:     process.env.ETH_RPC_URL    || 'https://ethereum-rpc.publicnode.com',
+    8453:  process.env.BASE_RPC_URL   || 'https://base-rpc.publicnode.com',
+    42161: process.env.ARB_RPC_URL    || 'https://arbitrum-one-rpc.publicnode.com',
+    10:    process.env.OP_RPC_URL     || 'https://optimism-rpc.publicnode.com',
+    43114: process.env.AVAX_RPC_URL   || 'https://avalanche-c-chain-rpc.publicnode.com',
+    137:   process.env.POLYGON_RPC_URL || 'https://polygon-bor-rpc.publicnode.com',
     56:    process.env.BSC_RPC_URL     || 'https://bsc-dataseed.binance.org',
   };
 
   const rpcUrl = RPC_URLS[chainId];
   if (!rpcUrl) throw new Error(`[GasFunder] No RPC for EVM chain ${chainId}`);
 
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const { createProvider } = require('../config/contracts');
+  const provider = createProvider(rpcUrl, chainId);
   const balance = await provider.getBalance(intakeAddress);
 
   // Need ~0.002 ETH for approve + deposit (varies by chain but safe minimum)

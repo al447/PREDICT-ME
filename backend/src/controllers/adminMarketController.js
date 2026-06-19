@@ -148,7 +148,7 @@ const create = async (req, res, next) => {
         try {
           // Build ancillaryData from market info
           const ancillaryData = `q:${title.trim()} res_data:p1:0,p2:1 category:${categorySlug}`;
-          const collateralAddress = process.env.MOCK_USDC_ADDRESS;
+          const collateralAddress = process.env.USDC_ADDRESS || process.env.MOCK_USDC_ADDRESS;
 
           onChainResult = await onchainService.createMarketOnChain({
             ancillaryData,
@@ -243,6 +243,8 @@ const close = async (req, res, next) => {
     if (market.status !== 'active') return res.status(400).json({ success: false, error: `Cannot close market with status: ${market.status}` });
 
     market.status = 'closed';
+    market.closedAt = new Date();
+    market.closedBy = req.user._id.toString(); // Track manual close by admin
     await market.save();
 
     await audit.log({ admin: req.user._id, action: 'market_close', targetType: 'market', targetId: market._id, details: { title: market.title }, ipAddress: req.ip });
@@ -262,6 +264,8 @@ const reopen = async (req, res, next) => {
     if (market.status !== 'closed') return res.status(400).json({ success: false, error: `Cannot reopen market with status: ${market.status}` });
 
     market.status = 'active';
+    market.closedAt = null; // Clear close tracking
+    market.closedBy = null;
     await market.save();
 
     await audit.log({ admin: req.user._id, action: 'market_reopen', targetType: 'market', targetId: market._id, details: { title: market.title }, ipAddress: req.ip });
@@ -294,6 +298,7 @@ const resolve = async (req, res, next) => {
         resolution: outcome === 'yes' ? 'Yes' : outcome === 'no' ? 'No' : 'Cancelled',
         resolvedBy: req.user._id,
         resolvedAt: new Date(),
+        ...(winningCandidate ? { winningCandidate } : {}),
       },
       { new: true }
     );
@@ -305,7 +310,7 @@ const resolve = async (req, res, next) => {
     }
 
     // ── Cancel CLOB orders + settle trades + on-chain reportPayouts ──
-    let onChainNote = null;
+    let onChainNote = '';
     let settledTradeCount = 0;
 
     // Cancel all open CLOB orders for this market
@@ -323,27 +328,16 @@ const resolve = async (req, res, next) => {
       }
     }
 
-    // Settle open trades — mark winning trades as 'won', losing as 'lost'
+    // Settle open PAPER trades — credit winnings to User.balance (on-chain CLOB
+    // positions, which carry a conditionId, are redeemed on-chain and skipped here).
     try {
-      const winningOutcome = outcome === 'yes' ? 'Yes' : outcome === 'no' ? 'No' : null;
-      if (winningOutcome && market._id) {
-        const winResult = await Trade.updateMany(
-          { market: market._id, status: 'open', outcome: winningOutcome },
-          { status: 'won', settledAt: new Date() }
-        );
-        const loseResult = await Trade.updateMany(
-          { market: market._id, status: 'open', outcome: { $ne: winningOutcome } },
-          { status: 'lost', settledAt: new Date() }
-        );
-        settledTradeCount = (winResult.modifiedCount || 0) + (loseResult.modifiedCount || 0);
-        onChainNote += ` Settled ${settledTradeCount} trades (${winResult.modifiedCount} won, ${loseResult.modifiedCount} lost).`;
-      } else if (outcome === 'cancelled') {
-        const refundResult = await Trade.updateMany(
-          { market: market._id, status: 'open' },
-          { status: 'refunded', settledAt: new Date() }
-        );
-        settledTradeCount = refundResult.modifiedCount || 0;
-        onChainNote += ` Refunded ${settledTradeCount} trades (market cancelled).`;
+      const settlementService = require('../services/settlementService');
+      const result = await settlementService.settleMarket(market, { outcome, winningCandidate });
+      settledTradeCount = result.settledTradeCount;
+      if (outcome === 'cancelled') {
+        onChainNote += ` Refunded ${result.refunded} trades ($${result.totalPaid.toFixed(2)}) — market cancelled.`;
+      } else {
+        onChainNote += ` Settled ${settledTradeCount} trades (${result.won} won, ${result.lost} lost); paid $${result.totalPaid.toFixed(2)} in winnings.`;
       }
     } catch (err) {
       console.error('[Admin] Trade settlement failed:', err.message);

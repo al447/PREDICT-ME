@@ -223,11 +223,16 @@ router.post(
   body('useNegRisk').optional().isBoolean(),
   handleValidation,
   asyncHandler(async (req, res) => {
+    // Mainnet UMA: native USDC (0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359) is whitelisted
+    // proposalBond must be >= UMA's finalFee for USDC (typically ~1500 USDC)
+    const { ADDRESSES } = require('../config/contracts');
+    const nativeUsdc = ADDRESSES.USDC;
+    
     const result = await onchainService.createMarketOnChain({
       ancillaryData: req.body.ancillaryData,
-      rewardToken: req.body.rewardToken,
+      rewardToken: req.body.rewardToken || nativeUsdc,
       reward: req.body.reward || '0',
-      proposalBond: req.body.proposalBond || (100 * 1e6).toString(),
+      proposalBond: req.body.proposalBond || (1500 * 1e6).toString(), // 1500 USDC minimum for mainnet
       liveness: req.body.liveness || 7200,
       useNegRisk: req.body.useNegRisk || false,
     });
@@ -415,12 +420,15 @@ router.post(
       `q: ${truncatedTitle}`
     ));
 
+    // Mainnet UMA: native USDC is whitelisted as reward/collateral
+    const { ADDRESSES } = require('../config/contracts');
+    const nativeUsdc = ADDRESSES.USDC;
+    
     const result = await onchainService.createMarketOnChain({
       ancillaryData,
-      // UMA requires a whitelisted reward currency; MockUSDC is NOT whitelisted.
-      rewardToken:   process.env.UMA_REWARD_TOKEN_ADDRESS || process.env.MOCK_USDC_ADDRESS,
+      rewardToken:   nativeUsdc,
       reward:        '0',
-      proposalBond:  '0',
+      proposalBond:  (1500 * 1e6).toString(), // 1500 USDC minimum bond for mainnet
       liveness:      7200,
       useNegRisk:    !!market.negRisk,
     });
@@ -453,12 +461,14 @@ router.post(
     const limit = parseInt(req.body.limit || '10', 10);
     const dryRun = req.body.dryRun === true;
 
-    // Find pending markets
+    // Find pending markets — only migrate active/pending markets (Polymarket-style)
+    // Exclude closed, resolved, cancelled markets as they cannot be traded anyway
     const pendingMarkets = await Market.find({
       $or: [
         { onChain: { $ne: true } },
         { onChain: { $exists: false } },
       ],
+      status: { $in: ['active', 'pending'] },
     })
       .select('_id title description negRisk createdAt')
       .sort({ createdAt: -1 })
@@ -504,12 +514,15 @@ router.post(
           `q: ${truncatedTitle}`
         ));
 
+        // Mainnet UMA: native USDC is whitelisted as reward/collateral
+        const { ADDRESSES } = require('../config/contracts');
+        const nativeUsdc = ADDRESSES.USDC;
+        
         const result = await onchainService.createMarketOnChain({
           ancillaryData,
-          // UMA requires a whitelisted reward currency; MockUSDC is NOT whitelisted.
-          rewardToken: process.env.UMA_REWARD_TOKEN_ADDRESS || process.env.MOCK_USDC_ADDRESS,
+          rewardToken: nativeUsdc,
           reward: '0',
-          proposalBond: '0',
+          proposalBond: (1500 * 1e6).toString(), // 1500 USDC minimum bond for mainnet
           liveness: 7200,
           useNegRisk: !!m.negRisk,
         });

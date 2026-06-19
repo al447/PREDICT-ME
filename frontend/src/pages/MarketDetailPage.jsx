@@ -1,7 +1,9 @@
 import { useParams, Link } from 'react-router-dom';
-import { useState, lazy, Suspense, useMemo } from 'react';
-import { ChevronRight, Heart, TrendingUp, Clock, Users, MessageSquare, Activity, BookOpen, Trophy } from 'lucide-react';
+import { useState, useEffect, lazy, Suspense, useMemo } from 'react';
+import toast from 'react-hot-toast';
+import { ChevronRight, Heart, TrendingUp, Clock, Users, MessageSquare, Activity, BookOpen, Trophy, Zap, AlertCircle, CheckCircle, Lock, Hourglass } from 'lucide-react';
 import Layout from '../components/layout/Layout';
+import MarketStatusBadge from '../components/market/MarketStatusBadge';
 import RewardsBadge from '../components/market/RewardsBadge';
 import ShareEmbed from '../components/common/ShareEmbed';
 import OrderBook from '../components/common/OrderBook';
@@ -10,9 +12,11 @@ import Button from '../components/common/Button';
 import useTradeStore from '../store/tradeStore';
 import useAuthStore from '../store/authStore';
 import useDepositModalStore from '../store/depositModalStore';
-import { useMarket, useMarketComments, useMarketHolders, useMarketActivity } from '../hooks/useMarkets';
+import { useMarket, useMarketHolders, useMarketActivity } from '../hooks/useMarkets';
+import { commentsAPI } from '../services/api';
 import { useClobActivity, useClobHolders } from '../hooks/useClob';
 import useFavorites from '../hooks/useFavorites';
+import useCryptoPriceStream from '../hooks/useCryptoPriceStream';
 import { formatVolume, formatDate, formatBalance } from '../utils/format';
 
 // Use own CLOB data when ONCHAIN_ENABLED
@@ -26,14 +30,15 @@ const PM_RED   = '#ff3d57';
 const PM_BLUE  = '#2563eb';
 
 // ── Candidate row in grouped event ───────────────────────────────────────────
-const CandidateRow = ({ candidate, rank, onBuy, onSell, isSelected, onSelect }) => {
+const CandidateRow = ({ candidate, rank, onBuy, onNo, isSelected, onSelect }) => {
   const pct = candidate.probability ?? 0;
   const isUrl = candidate.image && (candidate.image.startsWith('http') || candidate.image.startsWith('/'));
+  const isResolved = candidate.resolved;
 
   return (
     <div
-      onClick={() => onSelect(candidate.name)}
-      className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-surface2)] ${isSelected ? 'bg-[var(--color-surface2)]' : ''}`}
+      onClick={() => !isResolved && onSelect(candidate.name)}
+      className={`flex items-center gap-3 px-4 py-3 transition-colors border-b border-[var(--color-border)] last:border-0 ${isResolved ? 'opacity-60' : 'cursor-pointer hover:bg-[var(--color-surface2)]'} ${isSelected ? 'bg-[var(--color-surface2)]' : ''}`}
     >
       <span className="w-5 text-xs text-[var(--color-text-muted)] flex-shrink-0">{rank}</span>
 
@@ -50,26 +55,34 @@ const CandidateRow = ({ candidate, rank, onBuy, onSell, isSelected, onSelect }) 
       <span className="flex-1 text-sm font-medium text-[var(--color-text)] truncate">{candidate.name}</span>
 
       <div className="flex items-center gap-3 flex-shrink-0">
-        <div className="text-right w-16">
-          <div className="text-sm font-bold text-[var(--color-text)]">{pct}%</div>
-          <div className="h-1 w-full rounded-full bg-[var(--color-border)] mt-1">
-            <div className="h-1 rounded-full" style={{ width: `${pct}%`, background: PM_GREEN }} />
-          </div>
-        </div>
-        <button
-          onClick={e => { e.stopPropagation(); onBuy(candidate.name); }}
-          className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
-          style={{ background: 'rgba(0,200,83,0.15)', color: PM_GREEN, border: `1px solid rgba(0,200,83,0.4)` }}
-        >
-          Yes {pct}¢
-        </button>
-        <button
-          onClick={e => { e.stopPropagation(); onSell(candidate.name); }}
-          className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
-          style={{ background: 'rgba(255,61,87,0.15)', color: PM_RED, border: `1px solid rgba(255,61,87,0.4)` }}
-        >
-          No {100 - pct}¢
-        </button>
+        {isResolved ? (
+          <span className="text-sm font-bold text-[var(--color-text-muted)] flex items-center gap-1">
+            No <span className="text-red-500">&#10060;</span>
+          </span>
+        ) : (
+          <>
+            <div className="text-right w-16">
+              <div className="text-sm font-bold text-[var(--color-text)]">{pct}%</div>
+              <div className="h-1 w-full rounded-full bg-[var(--color-border)] mt-1">
+                <div className="h-1 rounded-full" style={{ width: `${pct}%`, background: PM_GREEN }} />
+              </div>
+            </div>
+            <button
+              onClick={e => { e.stopPropagation(); onBuy(candidate.name); }}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+              style={{ background: 'rgba(0,200,83,0.15)', color: PM_GREEN, border: `1px solid rgba(0,200,83,0.4)` }}
+            >
+              Yes {pct}¢
+            </button>
+            <button
+              onClick={e => { e.stopPropagation(); onNo(candidate.name); }}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+              style={{ background: 'rgba(255,61,87,0.15)', color: PM_RED, border: `1px solid rgba(255,61,87,0.4)` }}
+            >
+              No {100 - pct}¢
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -78,13 +91,25 @@ const CandidateRow = ({ candidate, rank, onBuy, onSell, isSelected, onSelect }) 
 // ── Per-candidate / binary Trading Panel ─────────────────────────────────────
 const QUICK_AMOUNTS = [1, 5, 10, 20, 50, 100];
 
-const TradingPanel = ({ market, selectedCandidate, onCandidateChange }) => {
+const TradingPanel = ({ market, selectedCandidate, onCandidateChange, defaultOutcome = 'Yes' }) => {
   const isGrouped = market?.marketType === 'grouped';
-  const [selectedOutcome, setSelectedOutcome] = useState('Yes');
+  const firstOutcome = isGrouped ? 'Yes' : (market?.outcomes?.[0]?.name || 'Yes');
+  const [side, setSide] = useState('buy');
+  const [selectedOutcome, setSelectedOutcome] = useState(firstOutcome);
   const [amount, setAmount] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const { placeTrade, isPlacing, lastMarketUpdate } = useTradeStore();
   const { user, openAuthModal } = useAuthStore();
+
+  useEffect(() => {
+    if (isGrouped) setSelectedOutcome(defaultOutcome);
+  }, [defaultOutcome, isGrouped]);
+
+  useEffect(() => {
+    if (!isGrouped && market?.outcomes?.[0]) {
+      setSelectedOutcome(market.outcomes[0].name);
+    }
+  }, [market?._id]);
 
   const liveMarket = useMemo(() => {
     if (lastMarketUpdate?._id === market?._id) return { ...market, ...lastMarketUpdate };
@@ -111,17 +136,28 @@ const TradingPanel = ({ market, selectedCandidate, onCandidateChange }) => {
 
   const handleTrade = async () => {
     if (!user) { openAuthModal(); return; }
-    if (cantTrade || parsedAmount < 1 || insufficientBalance) return;
+    if (cantTrade || parsedAmount < 1 || (side === 'buy' && insufficientBalance)) return;
     if (needsCandidate) return;
     if (parsedAmount >= 50 && !confirmOpen) { setConfirmOpen(true); return; }
     setConfirmOpen(false);
-    const result = await placeTrade(market._id, selectedOutcome, parsedAmount, isGrouped ? selectedCandidate : null, market);
+    const result = await placeTrade(market._id, selectedOutcome, parsedAmount, isGrouped ? selectedCandidate : null, market, side);
     if (result) setAmount('');
   };
 
+  const isPositiveOutcome = isGrouped ? selectedOutcome === 'Yes' : selectedOutcome === firstOutcome;
+
   return (
     <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-4 sticky top-32">
-      <h3 className="font-semibold text-[var(--color-text)] mb-3 text-sm">Place Trade</h3>
+      {/* Buy / Sell toggle */}
+      <div className="flex mb-3 border-b border-[var(--color-border)]">
+        {['buy', 'sell'].map(s => (
+          <button key={s} onClick={() => setSide(s)}
+            className={`flex-1 pb-2 text-sm font-semibold transition-colors border-b-2 -mb-px ${side === s ? (s === 'buy' ? 'border-[var(--color-gold)] text-[var(--color-gold)]' : 'border-[#ff3d57] text-[#ff3d57]') : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}
+          >
+            {s === 'buy' ? 'Buy' : 'Sell'}
+          </button>
+        ))}
+      </div>
 
       {isGrouped && selectedCandidate && (
         <div className="mb-3 flex items-center justify-between px-3 py-2 rounded-lg bg-[var(--color-surface2)] border border-[var(--color-border)]">
@@ -137,26 +173,26 @@ const TradingPanel = ({ market, selectedCandidate, onCandidateChange }) => {
       )}
 
       <div className="flex gap-2 mb-4">
-        {['Yes', 'No'].map(o => {
+        {(isGrouped ? ['Yes', 'No'] : (liveMarket?.outcomes || []).map(out => out.name)).map((o, idx) => {
           const p = isGrouped
             ? (o === 'Yes' ? (candidateObj?.probability ?? 50) : (100 - (candidateObj?.probability ?? 50)))
             : (liveMarket?.outcomes?.find(out => out.name === o)?.price ?? 50);
-          const isYes = o === 'Yes';
+          const isFirst = idx === 0;
           const isActive = selectedOutcome === o;
           return (
             <button key={o} onClick={() => setSelectedOutcome(o)} disabled={cantTrade}
               className="flex-1 py-3 rounded-xl text-sm font-bold transition-all border disabled:opacity-50 disabled:cursor-not-allowed"
               style={isActive ? {
-                background: isYes ? 'rgba(0,200,83,0.2)' : 'rgba(255,61,87,0.2)',
-                borderColor: isYes ? PM_GREEN : PM_RED,
-                color: isYes ? PM_GREEN : PM_RED,
+                background: isFirst ? 'rgba(0,200,83,0.2)' : 'rgba(255,61,87,0.2)',
+                borderColor: isFirst ? PM_GREEN : PM_RED,
+                color: isFirst ? PM_GREEN : PM_RED,
               } : {
                 background: 'var(--color-surface2)',
                 borderColor: 'var(--color-border)',
                 color: 'var(--color-text-muted)',
               }}
             >
-              <div>Buy {o}</div>
+              <div>{side === 'buy' ? 'Buy' : 'Sell'} {o}</div>
               <div className="text-lg font-bold mt-0.5">{p}¢</div>
             </button>
           );
@@ -165,7 +201,7 @@ const TradingPanel = ({ market, selectedCandidate, onCandidateChange }) => {
 
       <div className="mb-4">
         <div className="flex items-center justify-between mb-1.5">
-          <label className="text-xs text-[var(--color-text-muted)]">Amount ($)</label>
+          <label className="text-xs text-[var(--color-text-muted)]">{side === 'buy' ? 'Amount ($)' : 'Shares'}</label>
           {user && (
             <div className="flex gap-1">
               {[['25%', 0.25], ['50%', 0.5], ['Max', 1]].map(([label, pct]) => (
@@ -187,7 +223,7 @@ const TradingPanel = ({ market, selectedCandidate, onCandidateChange }) => {
           <button onClick={() => setAmount(a => String((parseFloat(a)||0)+1))}
             className="w-10 h-10 bg-[var(--color-surface2)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] font-bold transition-colors flex items-center justify-center">+</button>
         </div>
-        <div className="grid grid-cols-6 gap-1">
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1">
           {QUICK_AMOUNTS.map(a => (
             <button key={a} onClick={() => setAmount(String(a))}
               className={`py-1.5 text-xs rounded-lg border transition-colors font-medium ${amount === String(a) ? 'border-[var(--color-gold)] text-[var(--color-gold)] bg-[var(--color-gold)]/10' : 'bg-[var(--color-surface2)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-gold)] hover:border-[var(--color-gold)]/50'}`}>
@@ -207,19 +243,29 @@ const TradingPanel = ({ market, selectedCandidate, onCandidateChange }) => {
             <span className="text-[var(--color-text-muted)]">Shares</span>
             <span className="text-[var(--color-text)] font-semibold">{shares.toFixed(2)}</span>
           </div>
-          <div className="flex justify-between border-t border-[var(--color-border)] pt-2">
-            <span className="text-[var(--color-text-muted)]">Potential profit</span>
-            <span className="font-bold" style={{ color: PM_GREEN }}>
-              +${(shares - parsedAmount).toFixed(2)}
-            </span>
-          </div>
+          {side === 'buy' && (
+            <div className="flex justify-between border-t border-[var(--color-border)] pt-2">
+              <span className="text-[var(--color-text-muted)]">Potential profit</span>
+              <span className="font-bold" style={{ color: PM_GREEN }}>
+                +${(shares - parsedAmount).toFixed(2)}
+              </span>
+            </div>
+          )}
+          {side === 'sell' && (
+            <div className="flex justify-between border-t border-[var(--color-border)] pt-2">
+              <span className="text-[var(--color-text-muted)]">You receive</span>
+              <span className="font-bold" style={{ color: PM_GREEN }}>
+                ${(parsedAmount * (price / 100)).toFixed(2)}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
       {confirmOpen && (
         <div className="bg-yellow-400/10 border border-yellow-400/30 rounded-xl p-3 mb-3 text-xs">
           <p className="text-yellow-300 font-semibold mb-2">Confirm large trade?</p>
-          <p className="text-[var(--color-text-muted)] mb-2">Buy {shares.toFixed(2)} {selectedCandidate ? `${selectedCandidate} ` : ''}{selectedOutcome} shares for ${parsedAmount.toFixed(2)}</p>
+          <p className="text-[var(--color-text-muted)] mb-2">{side === 'buy' ? 'Buy' : 'Sell'} {shares.toFixed(2)} {selectedCandidate ? `${selectedCandidate} ` : ''}{selectedOutcome} shares for ${parsedAmount.toFixed(2)}</p>
           <div className="flex gap-2">
             <button onClick={() => setConfirmOpen(false)} className="flex-1 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] text-xs">Cancel</button>
             <button onClick={handleTrade} className="flex-1 py-1.5 rounded-lg bg-[var(--color-gold)] text-black text-xs font-semibold">Confirm</button>
@@ -230,21 +276,21 @@ const TradingPanel = ({ market, selectedCandidate, onCandidateChange }) => {
       {!confirmOpen && (
         <button
           onClick={handleTrade}
-          disabled={cantTrade || parsedAmount < 1 || insufficientBalance || isPlacing || (isGrouped && !selectedCandidate)}
+          disabled={cantTrade || parsedAmount < 1 || (side === 'buy' && insufficientBalance) || isPlacing || (isGrouped && !selectedCandidate)}
           className="w-full py-3 rounded-xl font-bold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           style={{
-            background: selectedOutcome === 'Yes' ? 'rgba(0,200,83,0.2)' : 'rgba(255,61,87,0.2)',
-            border: `1px solid ${selectedOutcome === 'Yes' ? PM_GREEN : PM_RED}`,
-            color: selectedOutcome === 'Yes' ? PM_GREEN : PM_RED,
+            background: isPositiveOutcome ? 'rgba(0,200,83,0.2)' : 'rgba(255,61,87,0.2)',
+            border: `1px solid ${isPositiveOutcome ? PM_GREEN : PM_RED}`,
+            color: isPositiveOutcome ? PM_GREEN : PM_RED,
           }}
         >
           {!user ? 'Log in to trade'
             : isPlacing ? 'Placing…'
             : cantTrade ? 'Market closed'
             : parsedAmount < 1 ? 'Enter amount'
-            : insufficientBalance ? 'Insufficient balance'
+            : (side === 'buy' && insufficientBalance) ? 'Insufficient balance'
             : needsCandidate ? 'Select a candidate'
-            : `Buy ${selectedCandidate ? `${selectedCandidate} ` : ''}${selectedOutcome} — $${parsedAmount.toFixed(2)}`}
+            : `${side === 'buy' ? 'Buy' : 'Sell'} ${selectedCandidate ? `${selectedCandidate} ` : ''}${selectedOutcome} — $${parsedAmount.toFixed(2)}`}
         </button>
       )}
 
@@ -257,7 +303,7 @@ const TradingPanel = ({ market, selectedCandidate, onCandidateChange }) => {
         </div>
       )}
 
-      {insufficientBalance && parsedAmount > 0 && (
+      {side === 'buy' && insufficientBalance && parsedAmount > 0 && (
         <button onClick={() => useDepositModalStore.getState().openDepositModal()}
           className="mt-2 block w-full text-center text-xs hover:underline" style={{ color: PM_BLUE }}>
           Deposit funds →
@@ -269,8 +315,17 @@ const TradingPanel = ({ market, selectedCandidate, onCandidateChange }) => {
 
 // ── Social tabs content ───────────────────────────────────────────────────────
 const PositionsTab = ({ marketSlug }) => {
-  const positions = useTradeStore(s => s.positions);
+  const { positions, fetchPositions, isLoadingPositions } = useTradeStore();
+  const { user } = useAuthStore();
+
+  useEffect(() => {
+    if (user) fetchPositions();
+  }, [user]);
+
   const marketPositions = positions.filter(p => p.market?.slug === marketSlug);
+
+  if (!user) return <EmptyState icon={<Trophy className="w-8 h-8" />} text="Log in to see your positions" />;
+  if (isLoadingPositions) return <TabSkeleton />;
   if (!marketPositions.length) return <EmptyState icon={<Trophy className="w-8 h-8" />} text="No positions in this market yet" />;
   return (
     <div className="space-y-2">
@@ -294,44 +349,177 @@ const PositionsTab = ({ marketSlug }) => {
   );
 };
 
-const CommentsTab = ({ eventSlug }) => {
-  const { data, isLoading } = useMarketComments(eventSlug);
-  const comments = data?.comments || [];
-  if (isLoading) return <TabSkeleton />;
-  if (!comments.length) return <EmptyState icon={<MessageSquare className="w-8 h-8" />} text="No comments yet" />;
+const CommentsTab = ({ marketId }) => {
+  const [comments, setComments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [body, setBody] = useState('');
+  const [posting, setPosting] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [error, setError] = useState(null);
+  const { user } = useAuthStore();
+  const { openAuthModal } = useAuthStore();
+  const LIMIT = 20;
+
+  const fetchComments = async (pageNum = 1, append = false) => {
+    try {
+      setError(null);
+      const { data } = await commentsAPI.get(marketId, LIMIT, (pageNum - 1) * LIMIT);
+      if (data.success) {
+        const newComments = data.comments || [];
+        setComments(prev => append ? [...prev, ...newComments] : newComments);
+        setHasMore(newComments.length === LIMIT);
+        setPage(pageNum);
+      }
+    } catch (err) {
+      setError('Failed to load comments');
+    }
+    setLoading(false);
+    setLoadingMore(false);
+  };
+
+  useEffect(() => { if (marketId) fetchComments(); }, [marketId]);
+
+  const handleLoadMore = () => {
+    setLoadingMore(true);
+    fetchComments(page + 1, true);
+  };
+
+  const handlePost = async () => {
+    if (!body.trim() || posting) return;
+    if (!user) { openAuthModal(); return; }
+    setPosting(true);
+    try {
+      const { data } = await commentsAPI.post(marketId, body.trim());
+      if (data.success) {
+        setComments(prev => [data.comment, ...prev]);
+        setBody('');
+      }
+    } catch (err) {
+      const msg = err?.response?.data?.error || 'Failed to post comment';
+      toast.error(msg);
+    }
+    setPosting(false);
+  };
+
+  const handleLike = async (commentId) => {
+    if (!user) { openAuthModal(); return; }
+    try {
+      const { data } = await commentsAPI.like(commentId);
+      if (data.success) {
+        setComments(prev => prev.map(c =>
+          c._id === commentId ? { ...c, likes: c.likes + (data.liked ? 1 : -1), likedByMe: data.liked } : c
+        ));
+      }
+    } catch {}
+  };
+
+  const handleDelete = async (commentId) => {
+    if (!window.confirm('Delete this comment?')) return;
+    try {
+      const { data } = await commentsAPI.delete(commentId);
+      if (data.success) {
+        setComments(prev => prev.filter(c => c._id !== commentId));
+      }
+    } catch (err) {
+      toast.error('Failed to delete comment');
+    }
+  };
+
+  if (loading) return <TabSkeleton />;
+  if (error) return <EmptyState icon={<AlertCircle className="w-8 h-8" />} text={error} />;
+
   return (
-    <div className="space-y-3">
-      {comments.map((c, i) => (
-        <div key={i} className="px-4 py-3 bg-[var(--color-surface2)] rounded-lg text-sm">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="font-semibold text-[var(--color-text)] text-xs">
-              {c.userUsername || c.username || (c.userAddress ? c.userAddress.slice(0,8)+'…' : 'Anon')}
-            </span>
-            <span className="text-[var(--color-text-muted)] text-xs">{c.createdAt ? new Date(c.createdAt).toLocaleDateString() : ''}</span>
+    <div className="space-y-4">
+      {/* Comment input */}
+      <div className="flex items-start gap-2">
+        <div className="flex-1">
+          <textarea
+            value={body}
+            onChange={e => setBody(e.target.value)}
+            placeholder={user ? "Add a comment..." : "Log in to comment..."}
+            maxLength={2000}
+            rows={2}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && body.trim()) { e.preventDefault(); handlePost(); } }}
+            className="w-full bg-[var(--color-surface2)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-gold)] resize-none"
+            onClick={() => { if (!user) openAuthModal(); }}
+          />
+          <div className="flex items-center justify-between mt-1.5">
+            <span className="text-[10px] text-[var(--color-text-muted)]">{body.length}/2000</span>
+            <button
+              onClick={handlePost}
+              disabled={!body.trim() || posting || !user}
+              className="px-4 py-1.5 rounded-lg bg-[var(--color-gold)] text-black text-xs font-semibold disabled:opacity-50 transition-colors"
+            >
+              {posting ? 'Posting…' : 'Post'}
+            </button>
           </div>
-          <p className="text-[var(--color-text-muted)]">{c.body || c.text || c.content}</p>
+        </div>
+      </div>
+
+      {/* Comments list */}
+      {!comments.length && <EmptyState icon={<MessageSquare className="w-8 h-8" />} text="No comments yet — be the first!" />}
+      {comments.map((c) => (
+        <div key={c._id} className="px-4 py-3 bg-[var(--color-surface2)] rounded-lg text-sm">
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center gap-2">
+              {c.user?.avatar && (
+                <img src={c.user.avatar} alt="" className="w-5 h-5 rounded-full object-cover" />
+              )}
+              <span className="font-semibold text-[var(--color-text)] text-xs">{c.user?.username || 'Anonymous'}</span>
+              <span className="text-[var(--color-text-muted)] text-[10px]">
+                {c.createdAt ? new Date(c.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => handleLike(c._id)} className={`text-xs flex items-center gap-1 transition-colors ${c.likedByMe ? 'text-[var(--color-gold)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-gold)]'}`}>
+                ♥ {c.likes || 0}
+              </button>
+              {user && (user._id === c.user?._id || user.role === 'admin') && (
+                <button onClick={() => handleDelete(c._id)} className="text-xs text-[var(--color-text-muted)] hover:text-red-400 transition-colors">
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+          <p className="text-[var(--color-text)] text-sm leading-relaxed">{c.body}</p>
         </div>
       ))}
+
+      {/* Load more */}
+      {hasMore && (
+        <button
+          onClick={handleLoadMore}
+          disabled={loadingMore}
+          className="w-full py-2 text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-gold)] transition-colors"
+        >
+          {loadingMore ? 'Loading…' : 'Load more comments'}
+        </button>
+      )}
     </div>
   );
 };
 
-const HoldersTab = ({ conditionId }) => {
-  // Use own CLOB data when ONCHAIN_ENABLED, otherwise fall back to Polymarket
+const HoldersTab = ({ conditionId, marketId }) => {
   const ownHolders = useClobHolders(conditionId, 10);
   const polyHolders = useMarketHolders(conditionId);
 
-  const { data, isLoading } = USE_OWN_DATA ? ownHolders : polyHolders;
+  // If ONCHAIN and conditionId exists, use own CLOB data; otherwise fallback
+  const { data, isLoading } = (USE_OWN_DATA && conditionId) ? ownHolders : polyHolders;
   const holders = data?.holders || [];
   const source = data?.source || (USE_OWN_DATA ? 'predictme' : 'polymarket');
 
+  // Fallback: if no CLOB holders and no Polymarket holders, show message about trading
   if (isLoading) return <TabSkeleton />;
-  if (!holders.length) return <EmptyState icon={<Users className="w-8 h-8" />} text="No holder data available" />;
+  if (!holders.length) return (
+    <EmptyState icon={<Users className="w-8 h-8" />} text="No holders yet — be the first to trade!" />
+  );
 
   return (
     <div className="space-y-2">
       {source === 'predictme' && (
-        <div className="text-xs text-[var(--color-text-muted)] px-1">
+        <div className="text-xs text-[var(--color-text-muted)] px-1 mb-2">
           Real PredictMe users only (bot excluded)
         </div>
       )}
@@ -340,7 +528,7 @@ const HoldersTab = ({ conditionId }) => {
           <div className="flex items-center gap-2">
             <span className="w-5 text-xs text-[var(--color-text-muted)]">#{i+1}</span>
             <span className="text-[var(--color-text)] font-mono text-xs">
-              {h.name || h.username || (h.address ? h.address.slice(0,10)+'…' : 'Unknown')}
+              {h.name || h.username || h.user?.username || (h.address ? h.address.slice(0,10)+'…' : 'Trader')}
             </span>
           </div>
           <span className="text-sm font-semibold text-[var(--color-text)]">
@@ -352,22 +540,21 @@ const HoldersTab = ({ conditionId }) => {
   );
 };
 
-const ActivityTab = ({ conditionId }) => {
-  // Use own CLOB data when ONCHAIN_ENABLED, otherwise fall back to Polymarket
+const ActivityTab = ({ conditionId, marketSlug }) => {
   const ownActivity = useClobActivity(conditionId, 20);
   const polyActivity = useMarketActivity(conditionId);
 
-  const { data, isLoading } = USE_OWN_DATA ? ownActivity : polyActivity;
+  const { data, isLoading } = (USE_OWN_DATA && conditionId) ? ownActivity : polyActivity;
   const activities = data?.activities || [];
   const source = data?.source || (USE_OWN_DATA ? 'predictme' : 'polymarket');
 
   if (isLoading) return <TabSkeleton />;
-  if (!activities.length) return <EmptyState icon={<Activity className="w-8 h-8" />} text="No activity yet" />;
+  if (!activities.length) return <EmptyState icon={<Activity className="w-8 h-8" />} text="No activity yet — place the first trade!" />;
 
   return (
     <div className="space-y-2">
       {source === 'predictme' && (
-        <div className="text-xs text-[var(--color-text-muted)] px-1">
+        <div className="text-xs text-[var(--color-text-muted)] px-1 mb-2">
           Real PredictMe user activity (bot excluded)
         </div>
       )}
@@ -396,21 +583,6 @@ const ActivityTab = ({ conditionId }) => {
   );
 };
 
-const RulesTab = ({ market }) => {
-  const text = market?.faq || market?.rules || market?.description;
-  if (!text) return <EmptyState icon={<BookOpen className="w-8 h-8" />} text="No rules available" />;
-  return (
-    <div className="px-2">
-      <p className="text-sm text-[var(--color-text-muted)] leading-relaxed whitespace-pre-line">{text}</p>
-      {market?.sourceOfTruth && (
-        <div className="mt-4 p-3 bg-[var(--color-surface2)] rounded-lg border border-[var(--color-border)]">
-          <p className="text-xs font-semibold text-[var(--color-text)] mb-1">Resolution source</p>
-          <p className="text-xs text-[var(--color-text-muted)]">{market.sourceOfTruth}</p>
-        </div>
-      )}
-    </div>
-  );
-};
 
 const EmptyState = ({ icon, text }) => (
   <div className="flex flex-col items-center gap-2 py-8 text-[var(--color-text-muted)]">
@@ -457,14 +629,183 @@ const MarketIcon = ({ market, size = 14 }) => {
   );
 };
 
+// ── Market Status Banner ─────────────────────────────────────────────────────
+const MarketStatusBanner = ({ market }) => {
+  const { status, resolvedOutcome, resolvedAt, closedAt, endDate, resolutionSource, onChain, conditionId } = market;
+
+  if (status === 'active') return null;
+
+  if (status === 'resolved') {
+    const isYes = resolvedOutcome?.toLowerCase() === 'yes';
+    const isNo = resolvedOutcome?.toLowerCase() === 'no';
+    const bgColor = isYes ? 'rgba(34, 197, 94, 0.1)' : isNo ? 'rgba(239, 68, 68, 0.1)' : 'rgba(107, 114, 128, 0.1)';
+    const textColor = isYes ? '#22c55e' : isNo ? '#ef4444' : '#6b7280';
+    const Icon = isYes ? CheckCircle : isNo ? AlertCircle : CheckCircle;
+
+    return (
+      <div className="mb-4 p-4 rounded-xl border" style={{ backgroundColor: bgColor, borderColor: `${textColor}30` }}>
+        <div className="flex items-start gap-3">
+          <Icon className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: textColor }} />
+          <div className="flex-1">
+            <p className="font-semibold text-sm" style={{ color: textColor }}>
+              Resolved {resolvedOutcome ? `— ${resolvedOutcome.toUpperCase()}` : ''}
+            </p>
+            <p className="text-xs mt-0.5" style={{ color: textColor, opacity: 0.8 }}>
+              This market was resolved on {resolvedAt ? new Date(resolvedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'N/A'}.
+              {resolvedOutcome && ' Winnings have been distributed to winning shareholders.'}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === 'closed') {
+    return (
+      <div className="mb-4 p-4 rounded-xl border bg-yellow-500/10 border-yellow-500/30">
+        <div className="flex items-start gap-3">
+          <Lock className="w-5 h-5 flex-shrink-0 mt-0.5 text-yellow-400" />
+          <div className="flex-1">
+            <p className="font-semibold text-sm text-yellow-400">Trading Closed — Awaiting Resolution</p>
+            <p className="text-xs text-yellow-400/80 mt-0.5">
+              This market has closed and is awaiting final resolution.
+              {resolutionSource && ` Resolution source: ${resolutionSource}.`}
+              {onChain && conditionId && ' This is an on-chain market resolved via UMA or Chainlink oracle.'}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === 'expired' || (endDate && new Date(endDate) < new Date())) {
+    return (
+      <div className="mb-4 p-4 rounded-xl border bg-gray-500/10 border-gray-500/30">
+        <div className="flex items-start gap-3">
+          <Hourglass className="w-5 h-5 flex-shrink-0 mt-0.5 text-gray-400" />
+          <div className="flex-1">
+            <p className="font-semibold text-sm text-gray-400">Market Expired</p>
+            <p className="text-xs text-gray-400/80 mt-0.5">
+              This market has passed its end date and is pending automatic closure.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+};
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 const TABS = [
-  { id: 'positions', label: 'Positions', icon: Trophy },
   { id: 'comments', label: 'Comments', icon: MessageSquare },
+  { id: 'positions', label: 'Positions', icon: Trophy },
   { id: 'holders', label: 'Top Holders', icon: Users },
   { id: 'activity', label: 'Activity', icon: Activity },
-  { id: 'rules', label: 'Rules & FAQ', icon: BookOpen },
 ];
+
+// ── Live price ticker for 5min crypto markets ──────────────────────────────
+const LivePriceTicker = ({ market }) => {
+  const isFiveMin = market?.frequency === '5min';
+  const symbol = market?.priceSymbol;
+  const wsSymbols = useMemo(() => (isFiveMin && symbol ? [symbol] : []), [isFiveMin, symbol]);
+  const wsPrices = useCryptoPriceStream(wsSymbols);
+  const priceData = symbol ? wsPrices[symbol] : null;
+
+  // Countdown to next 5-min boundary
+  const [secs, setSecs] = useState(0);
+  useEffect(() => {
+    if (!isFiveMin) return;
+    const tick = () => {
+      const now = Date.now();
+      const next = Math.ceil(now / 300_000) * 300_000;
+      setSecs(Math.max(0, Math.round((next - now) / 1000)));
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [isFiveMin]);
+
+  if (!isFiveMin || !symbol) return null;
+
+  const price = priceData?.price;
+  const change24h = priceData?.change24h;
+  const isUp = (change24h ?? 0) >= 0;
+  const m = String(Math.floor(secs / 60)).padStart(2, '0');
+  const s = String(secs % 60).padStart(2, '0');
+  const fmtP = (v) => {
+    if (v == null) return '—';
+    if (v >= 10000) return `$${(v/1000).toFixed(1)}K`;
+    if (v >= 1000) return `$${v.toLocaleString('en', { maximumFractionDigits: 0 })}`;
+    if (v >= 1) return `$${v.toFixed(2)}`;
+    return `$${v.toFixed(4)}`;
+  };
+
+  return (
+    <div className="mb-4 p-3 bg-[var(--color-surface2)] border border-[var(--color-border)] rounded-xl flex flex-wrap items-center gap-4">
+      <div className="flex items-center gap-2">
+        <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+        <span className="text-[11px] font-bold text-red-500">LIVE</span>
+        <span className="text-sm font-bold text-[var(--color-text)]">{symbol}/USD</span>
+      </div>
+      <div className="flex items-baseline gap-1.5">
+        <span className="text-xl font-bold" style={{ color: '#a855f7' }}>{fmtP(price)}</span>
+        {change24h != null && (
+          <span className={`text-xs font-semibold ${isUp ? 'text-emerald-400' : 'text-red-400'}`}>
+            {isUp ? '+' : ''}{change24h.toFixed(2)}% 24h
+          </span>
+        )}
+      </div>
+      <div className="ml-auto flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
+        <Zap className="w-3 h-3 text-yellow-400" />
+        <span>Resolves in</span>
+        <span className="font-mono font-bold text-[var(--color-text)]">{m}:{s}</span>
+        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)]">Chainlink</span>
+      </div>
+    </div>
+  );
+};
+
+// ── Mobile Trading Panel (slide-up) ──────────────────────────────────────────
+const MobileTradingPanel = ({ market, selectedCandidate, onCandidateChange, defaultOutcome }) => {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="lg:hidden">
+      {/* Backdrop */}
+      {expanded && (
+        <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setExpanded(false)} />
+      )}
+
+      {/* Slide-up panel */}
+      {expanded && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 bg-[var(--color-bg)] rounded-t-2xl border-t border-[var(--color-border)] max-h-[85vh] overflow-y-auto pb-safe">
+          <div className="flex justify-center pt-3 pb-1">
+            <div className="w-10 h-1 bg-[var(--color-border)] rounded-full" />
+          </div>
+          <div className="px-4 pb-6">
+            <TradingPanel
+              market={market}
+              selectedCandidate={selectedCandidate}
+              onCandidateChange={onCandidateChange}
+              defaultOutcome={defaultOutcome}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Fixed bottom button */}
+      {!expanded && (
+        <div className="fixed bottom-16 left-0 right-0 z-50 p-4 bg-[var(--color-bg)] border-t border-[var(--color-border)]">
+          <Button variant="primary" size="md" fullWidth onClick={() => setExpanded(true)}>
+            Trade {selectedCandidate ? `— ${selectedCandidate}` : ''}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const MarketDetailPage = () => {
   const { slug } = useParams();
@@ -472,7 +813,7 @@ const MarketDetailPage = () => {
   const market = data?.market;
   const { toggleFavorite, isFavorited } = useFavorites();
   const { fetchPositions } = useTradeStore();
-  const [activeTab, setActiveTab] = useState('positions');
+  const [activeTab, setActiveTab] = useState('comments');
   const [selectedCandidate, setSelectedCandidate] = useState(null);
 
   const isGrouped = market?.marketType === 'grouped';
@@ -480,8 +821,9 @@ const MarketDetailPage = () => {
     [...(market?.candidates || [])].sort((a, b) => b.probability - a.probability),
   [market?.candidates]);
 
-  const handleCandidateBuy = (name) => { setSelectedCandidate(name); };
-  const handleCandidateSell = (name) => { setSelectedCandidate(name); };
+  const [defaultOutcome, setDefaultOutcome] = useState('Yes');
+  const handleCandidateBuy = (name) => { setSelectedCandidate(name); setDefaultOutcome('Yes'); };
+  const handleCandidateNo = (name) => { setSelectedCandidate(name); setDefaultOutcome('No'); };
 
   if (isLoading) {
     return (
@@ -523,9 +865,15 @@ const MarketDetailPage = () => {
           <span className="text-[var(--color-text)] truncate max-w-xs">{market.title}</span>
         </div>
 
+        {/* Live price ticker for 5min markets */}
+        <LivePriceTicker market={market} />
+
+        {/* Market Status Banner (closed/pending/resolved) */}
+        <MarketStatusBanner market={market} />
+
         {/* Header */}
-        <div className="flex items-start justify-between gap-4 mb-6">
-          <div className="flex items-start gap-4">
+        <div className="flex items-start justify-between gap-3 mb-6">
+          <div className="flex items-start gap-3 min-w-0">
             <MarketIcon market={market} size={14} />
             <div>
               <h1 className="text-xl md:text-2xl font-bold text-[var(--color-text)] mb-2 leading-tight">{market.title}</h1>
@@ -545,6 +893,7 @@ const MarketDetailPage = () => {
                     <span>Ends {formatDate(market.endDate)}</span>
                   </div>
                 )}
+                <MarketStatusBadge market={market} size="md" />
                 {isGrouped && (
                   <span className="text-xs px-2 py-0.5 rounded-full font-medium"
                     style={{ background: 'rgba(37,99,235,0.15)', color: PM_BLUE, border: `1px solid rgba(37,99,235,0.3)` }}>
@@ -592,7 +941,7 @@ const MarketDetailPage = () => {
                       isSelected={selectedCandidate === c.name}
                       onSelect={setSelectedCandidate}
                       onBuy={handleCandidateBuy}
-                      onSell={handleCandidateSell}
+                      onNo={handleCandidateNo}
                     />
                   ))}
                 </div>
@@ -601,6 +950,27 @@ const MarketDetailPage = () => {
 
             {/* Binary market — show OrderBook */}
             {!isGrouped && <OrderBook market={market} />}
+
+            {/* Rules & FAQ Section */}
+            {(market.faq || market.rules || market.description || market.sourceOfTruth) && (
+              <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-[var(--color-text-muted)]" />
+                  <h3 className="font-semibold text-sm text-[var(--color-text)]">Rules & FAQ</h3>
+                </div>
+                <div className="p-4">
+                  <p className="text-sm text-[var(--color-text-muted)] leading-relaxed whitespace-pre-line">
+                    {market.faq || market.rules || market.description}
+                  </p>
+                  {market.sourceOfTruth && (
+                    <div className="mt-4 p-3 bg-[var(--color-surface2)] rounded-lg border border-[var(--color-border)]">
+                      <p className="text-xs font-semibold text-[var(--color-text)] mb-1">Resolution source</p>
+                      <p className="text-xs text-[var(--color-text-muted)]">{market.sourceOfTruth}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Tabs */}
             <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl overflow-hidden">
@@ -621,11 +991,10 @@ const MarketDetailPage = () => {
                 })}
               </div>
               <div className="p-4">
+                {activeTab === 'comments' && <CommentsTab marketId={market._id} />}
                 {activeTab === 'positions' && <PositionsTab marketSlug={slug} />}
-                {activeTab === 'comments' && <CommentsTab eventSlug={market.polymarketEventSlug || slug.replace('pm-', '')} />}
-                {activeTab === 'holders' && <HoldersTab conditionId={market.conditionId} />}
-                {activeTab === 'activity' && <ActivityTab conditionId={market.conditionId} />}
-                {activeTab === 'rules' && <RulesTab market={market} />}
+                {activeTab === 'holders' && <HoldersTab conditionId={market.conditionId} marketId={market._id} />}
+                {activeTab === 'activity' && <ActivityTab conditionId={market.conditionId} marketSlug={slug} />}
               </div>
             </div>
           </div>
@@ -636,16 +1005,18 @@ const MarketDetailPage = () => {
               market={market}
               selectedCandidate={selectedCandidate}
               onCandidateChange={setSelectedCandidate}
+              defaultOutcome={defaultOutcome}
             />
           </div>
         </div>
 
-        {/* Mobile trading button (sticky bottom) */}
-        <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 p-4 pb-safe bg-[var(--color-bg)] border-t border-[var(--color-border)]">
-          <Button variant="primary" size="md" fullWidth onClick={() => document.getElementById('mobile-trade-modal')?.showModal?.()}>
-            Trade {selectedCandidate ? `— ${selectedCandidate}` : ''}
-          </Button>
-        </div>
+        {/* Mobile trading panel (expandable) */}
+        <MobileTradingPanel
+          market={market}
+          selectedCandidate={selectedCandidate}
+          onCandidateChange={setSelectedCandidate}
+          defaultOutcome={defaultOutcome}
+        />
       </div>
     </Layout>
   );

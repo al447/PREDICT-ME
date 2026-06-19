@@ -1,13 +1,13 @@
 /**
- * M1 On-Chain Contract Configuration — Non-Custodial Live Product
+ * M1 On-Chain Contract Configuration — MAINNET ONLY
+ * Testnet support disabled. All values MUST be set via environment variables.
  *
- * All values are env-driven so a mainnet cutover is a pure env change.
- *
- * Mainnet cutover checklist:
- *   1. NETWORK=mainnet
- *   2. MOCK_USDC_ADDRESS=0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174 (USDC.e)
- *   3. Re-deploy M1 contracts on Polygon mainnet, update all *_ADDRESS vars
- *   4. Fund RELAYER_PRIVATE_KEY + OPERATOR_PRIVATE_KEY with real MATIC
+ * Required env vars:
+ *   1. NETWORK=mainnet (enforced)
+ *   2. USDC_ADDRESS=0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359 (native USDC)
+ *   3. POLYGON_RPC_URL=https://polygon-bor-rpc.publicnode.com (or other mainnet RPC)
+ *   4. *_ADDRESS vars for all contracts
+ *   5. RELAYER_PRIVATE_KEY + OPERATOR_PRIVATE_KEY funded with POL
  */
 
 const path = require('path');
@@ -15,36 +15,60 @@ const path = require('path');
 // Load ABI JSON files
 const loadAbi = (name) => require(path.join(__dirname, '..', 'contracts', `${name}.json`));
 
-// ── Network ───────────────────────────────────────────────────────────────────
-const NETWORK = process.env.NETWORK || 'amoy';
-const IS_MAINNET = NETWORK === 'mainnet';
+// ── Mainnet Enforcement ───────────────────────────────────────────────────────
+if (process.env.NETWORK && process.env.NETWORK !== 'mainnet') {
+  throw new Error(`[PredictMe] Invalid NETWORK=${process.env.NETWORK}. Only 'mainnet' is supported.`);
+}
 
-const CHAIN_ID = IS_MAINNET ? 137 : 80002;
-const RPC_URL = IS_MAINNET
-  ? (process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com')
-  : (process.env.POLYGON_AMOY_RPC_URL || 'https://polygon-amoy-bor-rpc.publicnode.com');
-const BLOCK_EXPLORER = IS_MAINNET
-  ? 'https://polygonscan.com'
-  : 'https://amoy.polygonscan.com';
+// ── Network ───────────────────────────────────────────────────────────────────
+const NETWORK = 'mainnet';
+const IS_MAINNET = true;
+const CHAIN_ID = 137;
+
+// RPC URL must be explicitly set (no defaults)
+const RPC_URL = process.env.POLYGON_RPC_URL || '';
+if (!RPC_URL) {
+  console.warn('[PredictMe] WARNING: POLYGON_RPC_URL not set — on-chain features will fail at runtime.');
+}
+
+const BLOCK_EXPLORER = 'https://polygonscan.com';
 
 // ── Feature flags ─────────────────────────────────────────────────────────────
 const NONCUSTODIAL_ENABLED = process.env.NONCUSTODIAL_ENABLED === 'true';
 const ONCHAIN_ENABLED = process.env.ONCHAIN_ENABLED === 'true';
 
 // ── Contract addresses ────────────────────────────────────────────────────────
+// All addresses MUST be set via environment variables (no testnet defaults).
+// We log warnings at startup but defer hard failures to actual usage so that
+// deploys don't crash while Render syncs blueprint env vars.
+const envOrWarn = (name) => {
+  const value = process.env[name];
+  if (!value) {
+    console.warn(`[PredictMe] WARNING: env var ${name} not set — on-chain features using it will fail at runtime.`);
+    return '';
+  }
+  return value;
+};
+
 const ADDRESSES = {
-  MOCK_USDC:         process.env.MOCK_USDC_ADDRESS,
-  CTF:               process.env.CTF_ADDRESS || process.env.CONDITIONAL_TOKENS_ADDRESS,
-  CTF_EXCHANGE:      process.env.EXCHANGE_ADDRESS || process.env.CTF_EXCHANGE_ADDRESS,
-  UMA_ADAPTER:       process.env.UMA_ADAPTER_ADDRESS || process.env.UMA_CTF_ADAPTER_ADDRESS,
-  NEG_RISK_ADAPTER:  process.env.NEG_RISK_ADAPTER_ADDRESS,
-  NEG_RISK_EXCHANGE: process.env.NEG_RISK_EXCHANGE_ADDRESS,
-  WALLET_FACTORY:    process.env.WALLET_FACTORY_ADDRESS,
-  MARKET_FACTORY:    process.env.MARKET_FACTORY_ADDRESS,
+  // Native Circle USDC on Polygon mainnet (0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359)
+  // USDC_ADDRESS is the canonical key; MOCK_USDC_ADDRESS kept for backward compat
+  USDC:              process.env.USDC_ADDRESS || process.env.MOCK_USDC_ADDRESS || '',
+  MOCK_USDC:         process.env.USDC_ADDRESS || process.env.MOCK_USDC_ADDRESS || '',
+  CTF:               envOrWarn('CTF_ADDRESS'),
+  CTF_EXCHANGE:      envOrWarn('CTF_EXCHANGE_ADDRESS'),
+  UMA_ADAPTER:       envOrWarn('UMA_ADAPTER_ADDRESS'),
+  NEG_RISK_ADAPTER:  envOrWarn('NEG_RISK_ADAPTER_ADDRESS'),
+  NEG_RISK_EXCHANGE: envOrWarn('NEG_RISK_EXCHANGE_ADDRESS'),
+  WALLET_FACTORY:    envOrWarn('WALLET_FACTORY_ADDRESS'),
+  MARKET_FACTORY:    envOrWarn('MARKET_FACTORY_ADDRESS'),
+  WRAPPED_COLLATERAL: envOrWarn('WRAPPED_COLLATERAL_ADDRESS'),
+  CRYPTO_RESOLVER:   envOrWarn('CRYPTO_MARKET_RESOLVER_ADDRESS'),  // M7
 };
 
 const ABIS = {
-  MOCK_USDC:         loadAbi('MockUSDC'),
+  USDC:              loadAbi('USDC'),
+  MOCK_USDC:         loadAbi('USDC'), // backward-compat alias
   CTF:               loadAbi('ConditionalTokens'),
   CTF_EXCHANGE:      loadAbi('CTFExchange'),
   UMA_ADAPTER:       loadAbi('UmaCtfAdapter'),
@@ -52,10 +76,12 @@ const ABIS = {
   NEG_RISK_EXCHANGE: loadAbi('NegRiskExchange'),
   WALLET_FACTORY:    loadAbi('WalletFactory'),
   MARKET_FACTORY:    loadAbi('MarketFactory'),
+  WRAPPED_COLLATERAL: loadAbi('WrappedCollateral'),
+  CRYPTO_RESOLVER:   loadAbi('CryptoMarketResolver'),  // M7 on-chain price resolution
 };
 
 // ── EIP-712 domains for CLOB order signing ────────────────────────────────────
-// MUST match the deployed exchange domainSeparator(). Verified on-chain (Amoy):
+// MUST match the deployed exchange domainSeparator(). Verified on-chain (Mainnet):
 // CTFExchange => name='Polymarket CTF Exchange', version='1'.
 const ORDER_DOMAIN = {
   name: 'Polymarket CTF Exchange',
@@ -69,6 +95,22 @@ const NEG_RISK_ORDER_DOMAIN = {
   version: '1',
   chainId: CHAIN_ID,
   verifyingContract: ADDRESSES.NEG_RISK_EXCHANGE,
+};
+
+// ── UMA Optimistic Oracle Configuration ───────────────────────────────────────
+// Mainnet UMA addresses (verified at docs.uma.xyz)
+const UMA_CONFIG = {
+  // UMA Finder contract address (mainnet)
+  finder: process.env.UMA_FINDER_ADDRESS || '0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64',
+  // Optimistic Oracle V2 address (mainnet) - verified at docs.uma.xyz
+  // https://docs.uma.xyz/resources/network-addresses → Polygon mainnet OO V2
+  optimisticOracleV2: process.env.UMA_OO_V2_ADDRESS || '0xee3Afe347D5C74317041E2618C49534dAf887c24',
+  // Native USDC is whitelisted as reward/collateral on UMA mainnet
+  rewardToken: process.env.UMA_REWARD_TOKEN_ADDRESS || process.env.USDC_ADDRESS || requiredEnv('MOCK_USDC_ADDRESS'),
+  // Proposal bond must be >= UMA's finalFee for USDC (typically ~1500 USDC)
+  minProposalBond: process.env.UMA_MIN_PROPOSAL_BOND || (1500 * 1e6).toString(),
+  // Default liveness period (2 hours in seconds)
+  defaultLiveness: parseInt(process.env.UMA_DEFAULT_LIVENESS || '7200', 10),
 };
 
 // ── EIP-712 Order type definition (matches CTFExchange ABI) ──────────────────
@@ -91,11 +133,17 @@ const ORDER_TYPES = {
 };
 
 // ── Bridge config ─────────────────────────────────────────────────────────────
+let BRIDGE_DEST_CHAIN_ID = parseInt(process.env.BRIDGE_DEST_CHAIN_ID || '137', 10);
+if (BRIDGE_DEST_CHAIN_ID !== 137) {
+  console.warn(`[PredictMe] WARNING: BRIDGE_DEST_CHAIN_ID=${BRIDGE_DEST_CHAIN_ID} is not mainnet. Overriding to 137.`);
+  BRIDGE_DEST_CHAIN_ID = 137;
+}
+
 const BRIDGE_CONFIG = {
   provider:     process.env.BRIDGE_PROVIDER || 'relay',
   relayApiUrl:  process.env.RELAY_API_URL   || 'https://api.relay.link',
   lifiApiUrl:   process.env.LIFI_API_URL    || 'https://li.quest/v1',
-  destChainId:  IS_MAINNET ? 137 : parseInt(process.env.BRIDGE_DEST_CHAIN_ID || '80002', 10),
+  destChainId:  137,
   destToken:    'USDC',
 };
 
@@ -131,6 +179,45 @@ const MESSAGE_TRANSMITTER_ABI = [
   'function receiveMessage(bytes message, bytes attestation) external returns (bool success)',
   'function usedNonces(bytes32) view returns (uint256)',
 ];
+
+// ── Provider factory ──────────────────────────────────────────────────────────
+// Uses staticNetwork to skip ethers' eth_chainId auto-detection, which can fail
+// with "failed to detect network" on some Node versions (e.g. Node 25). The
+// chainId is known from config, so detection is unnecessary.
+
+// Common EVM chain name → chainId map (mainnet chains only, testnet chains removed)
+const CHAIN_ID_BY_NAME = {
+  ethereum: 1,
+  polygon: 137,
+  bsc: 56,
+  base: 8453,
+  arbitrum: 42161,
+  optimism: 10,
+  avalanche: 43114,
+};
+
+/**
+ * Create a JsonRpcProvider with a static network (skips eth_chainId detection).
+ * @param {string} url       RPC endpoint
+ * @param {number} chainId   known chain id (required to skip detection)
+ * @param {object} opts      extra JsonRpcApiProviderOptions (e.g. batchMaxCount)
+ */
+const createProvider = (url, chainId, opts = {}) => {
+  const { ethers } = require('ethers');
+  if (chainId) {
+    const network = new ethers.Network(String(chainId), Number(chainId));
+    return new ethers.JsonRpcProvider(url, network, { staticNetwork: network, ...opts });
+  }
+  return new ethers.JsonRpcProvider(url, undefined, opts);
+};
+
+let _polygonProvider = null;
+const getPolygonProvider = () => {
+  if (!_polygonProvider) {
+    _polygonProvider = createProvider(RPC_URL, CHAIN_ID);
+  }
+  return _polygonProvider;
+};
 
 // ── Operator/Relayer key helpers ──────────────────────────────────────────────
 const getOperatorKey = () => {
@@ -176,6 +263,7 @@ module.exports = {
   ORDER_DOMAIN,
   ORDER_TYPES,
   NEG_RISK_ORDER_DOMAIN,
+  UMA_CONFIG,
   BRIDGE_CONFIG,
   CCTP_CONFIG,
   RELAY_CONFIG,
@@ -183,4 +271,7 @@ module.exports = {
   getOperatorKey,
   getOperatorAddress,
   getRelayerKey,
+  getPolygonProvider,
+  createProvider,
+  CHAIN_ID_BY_NAME,
 };

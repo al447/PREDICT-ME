@@ -47,10 +47,8 @@ const RELAYER_CONFIG = {
 function getRelayerWallet() {
   const key = process.env.RELAYER_PRIVATE_KEY || process.env.DEPLOYER_PRIVATE_KEY;
   if (!key) throw new Error('RELAYER_PRIVATE_KEY or DEPLOYER_PRIVATE_KEY not set');
-  const provider = new ethers.JsonRpcProvider(
-    process.env.POLYGON_AMOY_RPC_URL || 'https://polygon-amoy-bor-rpc.publicnode.com'
-  );
-  return new ethers.Wallet(key, provider);
+  const { getPolygonProvider } = require('../config/contracts');
+  return new ethers.Wallet(key, getPolygonProvider());
 }
 
 /**
@@ -104,10 +102,11 @@ function validateRelayRequest(request) {
  * Build EIP-712 domain for relayer
  */
 function getRelayDomain() {
+  const { CHAIN_ID } = require('../config/contracts');
   return {
     name: 'PredictMe Relayer',
     version: '1',
-    chainId: 80002, // Polygon Amoy
+    chainId: CHAIN_ID, // Polygon mainnet (137) — driven by env
     verifyingContract: process.env.RELAYER_VERIFIER_CONTRACT || '0x0000000000000000000000000000000000000000',
   };
 }

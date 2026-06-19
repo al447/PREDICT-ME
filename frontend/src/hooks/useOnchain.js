@@ -22,7 +22,7 @@ export function useUsdcBalance(address, enabled = true) {
     queryKey: ['usdcBalance', address],
     queryFn: async () => {
       if (!address) return 0;
-      const usdc = getReadContract('MockUSDC');
+      const usdc = getReadContract('USDC');
       const raw = await usdc.balanceOf(address);
       return Number(raw) / 1e6; // 6 decimals
     },
@@ -39,7 +39,7 @@ export function useUsdcAllowance(owner, spender, enabled = true) {
     queryKey: ['usdcAllowance', owner, spender],
     queryFn: async () => {
       if (!owner || !spender) return 0;
-      const usdc = getReadContract('MockUSDC');
+      const usdc = getReadContract('USDC');
       const raw = await usdc.allowance(owner, spender);
       return Number(raw) / 1e6;
     },
@@ -149,7 +149,7 @@ export function useDeployedProxy(owner, enabled = true) {
  * Approve USDC for a spender
  */
 export async function approveUsdc(spender, amount) {
-  const usdc = await getContract('MockUSDC', true);
+  const usdc = await getContract('USDC', true);
   const amountWei = ethers.parseUnits(amount.toString(), 6);
   const tx = await usdc.approve(spender, amountWei);
   const receipt = await tx.wait();
@@ -166,7 +166,7 @@ export async function approveUsdc(spender, amount) {
  */
 export async function splitPosition(conditionId, amount) {
   const ctf = await getContract('ConditionalTokens', true);
-  const usdc = await getContract('MockUSDC', true);
+  const usdc = await getContract('USDC', true);
   const collateral = await usdc.getAddress();
   const amountWei = ethers.parseUnits(amount.toString(), 6);
 
@@ -193,7 +193,7 @@ export async function splitPosition(conditionId, amount) {
  */
 export async function mergePositions(conditionId, amount) {
   const ctf = await getContract('ConditionalTokens', true);
-  const usdc = await getContract('MockUSDC', true);
+  const usdc = await getContract('USDC', true);
   const collateral = await usdc.getAddress();
   const amountWei = ethers.parseUnits(amount.toString(), 6);
 
@@ -220,7 +220,7 @@ export async function redeemPositions(conditionId, tokenIds, amounts) {
   const amountsWei = amounts.map(a => ethers.parseUnits(a.toString(), 6));
 
   const tx = await ctf.redeemPositions(
-    await (await getContract('MockUSDC', false)).getAddress(),
+    await (await getContract('USDC', false)).getAddress(),
     conditionId,
     tokenIds,
     amountsWei

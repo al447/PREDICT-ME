@@ -25,9 +25,9 @@ async function main() {
   console.log('Operator:', operator.address);
   console.log('Exchange:', ADDRESSES.CTF_EXCHANGE);
   console.log('CTF:     ', ADDRESSES.CTF);
-  console.log('USDC:    ', ADDRESSES.MOCK_USDC);
+  console.log('USDC:    ', ADDRESSES.USDC);
 
-  const usdc = new ethers.Contract(ADDRESSES.MOCK_USDC, [
+  const usdc = new ethers.Contract(ADDRESSES.USDC, [
     'function allowance(address,address) view returns (uint256)',
     'function approve(address,uint256) returns (bool)',
   ], operator);

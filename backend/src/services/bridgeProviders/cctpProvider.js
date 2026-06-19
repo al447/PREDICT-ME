@@ -32,6 +32,7 @@ const {
   MESSAGE_TRANSMITTER_ABI,
   RPC_URL: POLYGON_RPC,
   getOperatorKey,
+  getPolygonProvider,
 } = require('../../config/contracts');
 
 const SWEEP_ENABLED = process.env.BRIDGE_SWEEP_ENABLED === 'true';
@@ -186,7 +187,7 @@ async function burnOnSolana({ secretKey, amount, mintRecipientEvm }) {
  */
 async function getAttestation(burnTxHash) {
   if (!SWEEP_ENABLED) {
-    return { status: 'complete', attestation: '0xmock', message: '0xmock', provider: 'cctp' };
+    return { status: 'pending', attestation: null, message: null, provider: 'cctp' };
   }
 
   try {
@@ -231,7 +232,7 @@ async function mintOnPolygon({ messageBytes, attestation }) {
     return { txHash: null, provider: 'cctp' };
   }
 
-  const provider = new ethers.JsonRpcProvider(POLYGON_RPC);
+  const provider = getPolygonProvider();
   const operatorKey = getOperatorKey();
   const wallet = new ethers.Wallet(operatorKey, provider);
 

@@ -421,6 +421,7 @@ const CategoryPage = () => {
   }, [isCrypto]);
 
   useEffect(() => {
+    let ignore = false; // guard against out-of-order responses overwriting state
     const fetchMarkets = async () => {
       setLoading(true);
       try {
@@ -456,6 +457,7 @@ const CategoryPage = () => {
           params.tag = filterTag;
         }
         const { data } = await marketsAPI.getMarkets(params);
+        if (ignore) return; // a newer filter selection superseded this request
         if (data.success) {
           if (page === 1) {
             setAllMarkets(data.markets);
@@ -470,9 +472,10 @@ const CategoryPage = () => {
           setPages(data.pages);
         }
       } catch {}
-      setLoading(false);
+      if (!ignore) setLoading(false);
     };
     fetchMarkets();
+    return () => { ignore = true; };
   }, [slug, page, activeFilter, activeTab, activeCoin, activeTimeTab, isBreaking, isNew, isCrypto, categorySlug]);
 
   const { data: newMarketsData } = useMarkets({ category: isVirtual ? null : categorySlug, sort: 'newest', limit: 4 });
@@ -573,7 +576,7 @@ const CategoryPage = () => {
               </div>
             )}
 
-            {newMarkets.length > 0 && (
+            {/* {newMarkets.length > 0 && (
               <section className="mt-12">
                 <h2 className="text-lg font-bold text-[var(--color-text)] mb-4">
                   🆕 New {config.title} markets
@@ -582,7 +585,7 @@ const CategoryPage = () => {
                   {newMarkets.filter((m) => !allMarkets.some((x) => x._id === m._id)).map((m) => <MarketCard key={`new-${m._id}`} market={m} />)}
                 </div>
               </section>
-            )}
+            )} */}
           </div>
         </div>
 

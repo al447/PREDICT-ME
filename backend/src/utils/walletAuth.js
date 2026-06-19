@@ -26,7 +26,7 @@ try {
 const CHAIN_RPCS = {
   1: ['https://ethereum-rpc.publicnode.com', 'https://eth.drpc.org'],
   137: ['https://polygon-bor-rpc.publicnode.com', 'https://polygon.drpc.org'],
-  80002: [process.env.POLYGON_RPC_URL || 'https://polygon-amoy-bor-rpc.publicnode.com', 'https://rpc-amoy.polygon.technology'],
+  80002: [process.env.POLYGON_AMOY_RPC_URL || 'https://polygon-amoy-bor-rpc.publicnode.com', 'https://rpc-amoy.polygon.technology'],
   8453: ['https://base-rpc.publicnode.com', 'https://mainnet.base.org', 'https://base.drpc.org'],
   84532: ['https://base-sepolia-rpc.publicnode.com', 'https://sepolia.base.org'],
   11155111: ['https://ethereum-sepolia-rpc.publicnode.com', 'https://sepolia.drpc.org'],

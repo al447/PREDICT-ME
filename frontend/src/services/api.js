@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000') + '/api',
+  baseURL: import.meta.env.VITE_BACKEND_URL ? import.meta.env.VITE_BACKEND_URL + '/api' : '/api',
   // 45s tolerates a backend cold-start wake-up (Render free tier) instead of
   // failing at 15s and triggering retries. Keep-alive cron keeps it warm in
   // steady state, so requests normally complete near-instantly.
@@ -111,6 +111,11 @@ export const marketsAPI = {
   },
 };
 
+export const cryptoAPI = {
+  getLivePrices: (symbols) =>
+    api.get('/crypto/live-prices', { params: { symbols: symbols.join(',') } }),
+};
+
 export const categoriesAPI = {
   getAll: () => api.get('/categories'),
   getBySlug: (slug) => api.get(`/categories/${slug}`),
@@ -120,7 +125,15 @@ export const tradesAPI = {
   place: (data) => api.post('/trades', data),
   getMy: (params) => api.get('/trades/my', { params }),
   getPositions: () => api.get('/trades/positions'),
+  getRedeemablePositions: () => api.get('/trades/positions/redeemable'),
   getLeaderboard: (params) => api.get('/trades/leaderboard', { params }),
+};
+
+export const commentsAPI = {
+  get: (marketId, limit = 20, offset = 0) => api.get(`/comments/${marketId}`, { params: { limit, offset } }),
+  post: (marketId, body) => api.post(`/comments/${marketId}`, { body }),
+  like: (commentId) => api.post(`/comments/${commentId}/like`),
+  delete: (commentId) => api.delete(`/comments/${commentId}`),
 };
 
 export const clobAPI = {

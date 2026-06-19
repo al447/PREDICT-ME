@@ -2,6 +2,7 @@ import { Bookmark } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import useFavorites from '../../hooks/useFavorites';
 import { formatVolume } from '../../utils/format';
+import MarketStatusBadge from './MarketStatusBadge';
 
 const CATEGORY_COLORS = {
   crypto:      '#f97316',
@@ -122,7 +123,7 @@ const ArcGauge = ({ pct }) => {
 };
 
 // Binary market block: arc gauge on the right + two buy-button rows below
-const BinaryOutcomeBlock = ({ outcomes }) => {
+const BinaryOutcomeBlock = ({ outcomes, isActive }) => {
   const yes = outcomes?.[0];
   const no = outcomes?.[1];
   const yesPct = yes ? (yes.probability ?? Math.round(yes.price ?? 50)) : 50;
@@ -142,23 +143,34 @@ const BinaryOutcomeBlock = ({ outcomes }) => {
           </div>
         </div>
       </div>
-      {/* Buy buttons */}
-      <div className="flex gap-2">
-        <button
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
-          className="flex-1 flex items-center justify-between px-3 py-2 rounded-lg bg-[var(--color-btn-yes)] hover:bg-[var(--color-btn-yes-hover)] active:scale-[0.98] transition-all"
-        >
-          <span className="text-[12px] font-bold text-[var(--color-btn-yes-text)]">{yes?.name ?? 'Yes'}</span>
-          <span className="text-[11px] text-[var(--color-btn-yes-text)]/80">{yes?.price ? `+$${yes.price}` : ''}</span>
-        </button>
-        <button
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
-          className="flex-1 flex items-center justify-between px-3 py-2 rounded-lg bg-[var(--color-btn-no)] hover:bg-[var(--color-btn-no-hover)] active:scale-[0.98] transition-all"
-        >
-          <span className="text-[12px] font-bold text-[var(--color-btn-no-text)]">{no?.name ?? 'No'}</span>
-          <span className="text-[11px] text-[var(--color-btn-no-text)]/80">{no?.price ? `+$${no.price}` : ''}</span>
-        </button>
-      </div>
+      {/* Buy buttons — disabled if market not active */}
+      {isActive ? (
+        <div className="flex gap-2">
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            className="flex-1 flex items-center justify-between px-3 py-2 rounded-lg bg-[var(--color-btn-yes)] hover:bg-[var(--color-btn-yes-hover)] active:scale-[0.98] transition-all"
+          >
+            <span className="text-[12px] font-bold text-[var(--color-btn-yes-text)]">{yes?.name ?? 'Yes'}</span>
+            <span className="text-[11px] text-[var(--color-btn-yes-text)]/80">{yes?.price ? `+$${yes.price}` : ''}</span>
+          </button>
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            className="flex-1 flex items-center justify-between px-3 py-2 rounded-lg bg-[var(--color-btn-no)] hover:bg-[var(--color-btn-no-hover)] active:scale-[0.98] transition-all"
+          >
+            <span className="text-[12px] font-bold text-[var(--color-btn-no-text)]">{no?.name ?? 'No'}</span>
+            <span className="text-[11px] text-[var(--color-btn-no-text)]/80">{no?.price ? `+$${no.price}` : ''}</span>
+          </button>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <button
+            disabled
+            className="flex-1 flex items-center justify-center px-3 py-2 rounded-lg bg-[var(--color-surface2)] text-[var(--color-text-muted)] text-[12px] font-medium cursor-not-allowed"
+          >
+            Trading Closed
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -172,6 +184,9 @@ const MarketCard = ({ market, className = '' }) => {
   const isBinary = outcomes.length === 2 &&
     outcomes[0]?.name === 'Yes' &&
     outcomes[1]?.name === 'No';
+
+  const isActive = market.status === 'active';
+  const isResolved = market.status === 'resolved';
 
   const favorited = isFavorited(market._id);
 
@@ -201,39 +216,53 @@ const MarketCard = ({ market, className = '' }) => {
         <div className="flex items-start gap-3 mb-3">
           <MarketIcon market={market} />
           <div className="flex-1 min-w-0">
-            {(market.status === 'active' || market.subCategory) && (
-              <div className="flex items-center gap-1.5 mb-1">
-                {market.status === 'active' && (
-                  <span className="flex items-center gap-1 text-[10px] font-bold text-red-500">
-                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                    LIVE
-                  </span>
-                )}
-                {market.subCategory && (
-                  <span className="text-[10px] text-[var(--color-text-muted)] truncate">
-                    {market.status === 'active' && <span className="mx-0.5">·</span>}
-                    {market.subCategory}
-                  </span>
-                )}
-              </div>
-            )}
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              {/* Status badge — always shown */}
+              <MarketStatusBadge market={market} size="sm" />
+
+              {market.subCategory && (
+                <span className="text-[10px] text-[var(--color-text-muted)] truncate">
+                  · {market.subCategory}
+                </span>
+              )}
+            </div>
             <h3 className="text-[14px] font-medium text-[var(--color-text)] leading-snug line-clamp-2 group-hover:text-[var(--color-gold)] transition-colors">
               {market.title}
             </h3>
+            {/* Show resolution info for resolved markets */}
+            {market.status === 'resolved' && market.resolution && (
+              <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                Resolved {market.resolvedAt && new Date(market.resolvedAt).toLocaleDateString('en', { month: 'short', day: 'numeric' })}
+              </p>
+            )}
+            {/* Show closed info for closed/pending markets */}
+            {market.status === 'closed' && (
+              <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                Trading closed · Awaiting resolution
+              </p>
+            )}
           </div>
         </div>
 
         {/* Outcomes */}
         {isBinary ? (
           // Binary market — Polymarket style: arc gauge top-right + two buy buttons
-          <BinaryOutcomeBlock outcomes={outcomes} />
+          <BinaryOutcomeBlock outcomes={outcomes} isActive={isActive} />
         ) : (
           // Multi-outcome: one row per outcome (max 2 shown, rest truncated)
-          <div className="space-y-0 mb-1 mt-auto divide-y divide-[var(--color-border)]">
-            {outcomes.slice(0, 2).map((outcome) => (
-              <OutcomeRow key={outcome.name} outcome={outcome} onBuy={handleBuy} />
-            ))}
-            {outcomes.length > 2 && (
+          <div className={`space-y-0 mb-1 mt-auto divide-y divide-[var(--color-border)] ${!isActive ? 'opacity-60' : ''}`}>
+            {isActive ? (
+              outcomes.slice(0, 2).map((outcome) => (
+                <OutcomeRow key={outcome.name} outcome={outcome} onBuy={handleBuy} />
+              ))
+            ) : (
+              <div className="py-3 text-center">
+                <span className="text-xs text-[var(--color-text-muted)]">
+                  {isResolved ? 'Market resolved · View details' : 'Trading closed · Awaiting resolution'}
+                </span>
+              </div>
+            )}
+            {outcomes.length > 2 && isActive && (
               <div className="pt-2 text-xs text-[var(--color-text-muted)]">
                 +{outcomes.length - 2} more outcomes
               </div>

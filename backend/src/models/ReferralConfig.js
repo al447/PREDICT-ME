@@ -26,7 +26,4 @@ const referralConfigSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Ensure singleton via compound index
-referralConfigSchema.index({ _id: 1 });
-
 module.exports = mongoose.model('ReferralConfig', referralConfigSchema);

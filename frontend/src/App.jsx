@@ -90,14 +90,21 @@ function App() {
   // WebSocket listener for real-time notifications
   useEffect(() => {
     if (!user) return;
-    const wsUrl = (import.meta.env.VITE_WS_URL || 'ws://localhost:5000').replace(/^http/, 'ws');
+    // In development, Vite runs on port 5173 but backend WebSocket is on port 5000.
+    // In production, use VITE_BACKEND_URL or fall back to current host.
+    const isDev = import.meta.env.DEV;
+    const wsBase = import.meta.env.VITE_BACKEND_URL
+      ? import.meta.env.VITE_BACKEND_URL.replace(/^http/, 'ws')
+      : isDev
+        ? 'ws://localhost:5000'
+        : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
     let ws;
     let reconnectTimer;
 
     const connect = () => {
       try {
         const token = localStorage.getItem('pb365_token');
-        ws = new WebSocket(`${wsUrl}?token=${token}`);
+        ws = new WebSocket(`${wsBase}/ws?token=${token}`);
         ws.onmessage = (event) => {
           try {
             const msg = JSON.parse(event.data);

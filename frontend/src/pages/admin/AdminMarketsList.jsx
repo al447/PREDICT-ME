@@ -160,7 +160,9 @@ const AdminMarketsList = () => {
           <select value={filters.status} onChange={(e) => setFilters(f => ({ ...f, status: e.target.value }))}
             className="px-3 py-2 bg-[var(--color-surface2)] border border-[var(--color-border)] rounded-xl text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-gold)] flex-shrink-0">
             <option value="">All Status</option>
-            {['draft', 'active', 'closed', 'resolved'].map(s => <option key={s} value={s}>{s}</option>)}
+            {['draft', 'active', 'closed', 'pending', 'resolved', 'expired'].map(s => (
+              <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+            ))}
           </select>
           <select value={filters.category} onChange={(e) => setFilters(f => ({ ...f, category: e.target.value }))}
             className="px-3 py-2 bg-[var(--color-surface2)] border border-[var(--color-border)] rounded-xl text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-gold)] flex-shrink-0">

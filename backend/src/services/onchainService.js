@@ -4,7 +4,7 @@
  */
 
 const { ethers } = require('ethers');
-const { ADDRESSES, ABIS, RPC_URL, validate } = require('../config/contracts');
+const { ADDRESSES, ABIS, RPC_URL, validate, getPolygonProvider } = require('../config/contracts');
 
 const ONCHAIN_ENABLED = process.env.ONCHAIN_ENABLED === 'true';
 
@@ -15,7 +15,7 @@ let _contracts = null;
 
 function getProvider() {
   if (!_provider) {
-    _provider = new ethers.JsonRpcProvider(RPC_URL);
+    _provider = getPolygonProvider();
   }
   return _provider;
 }
@@ -35,9 +35,12 @@ function getContracts() {
     const provider = getProvider();
     const signer = getDeployerWallet();
 
+    const usdcAddress = ADDRESSES.USDC;
+    const usdcAbi = ABIS.USDC;
+
     _contracts = {
       // Read-only (provider)
-      usdc: new ethers.Contract(ADDRESSES.MOCK_USDC, ABIS.MOCK_USDC, provider),
+      usdc: new ethers.Contract(usdcAddress, usdcAbi, provider),
       ctf: new ethers.Contract(ADDRESSES.CTF, ABIS.CTF, provider),
       ctfExchange: new ethers.Contract(ADDRESSES.CTF_EXCHANGE, ABIS.CTF_EXCHANGE, provider),
       umaAdapter: new ethers.Contract(ADDRESSES.UMA_ADAPTER, ABIS.UMA_ADAPTER, provider),
@@ -323,8 +326,13 @@ async function redeemPositions(conditionId, userAddress) {
   if (bal0 > 0n) indexSets.push(1);
   if (bal1 > 0n) indexSets.push(2);
 
+  const collateralToken = ADDRESSES.USDC;
+  if (!collateralToken) {
+    throw new Error('[OnChain] USDC address not configured. Set in backend config/contracts.js');
+  }
+
   const tx = await ctf.redeemPositions(
-    ADDRESSES.MOCK_USDC,
+    collateralToken,
     ethers.ZeroHash,  // parentCollectionId = 0 for top-level
     conditionId,
     indexSets,

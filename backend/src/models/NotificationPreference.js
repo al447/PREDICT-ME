@@ -53,7 +53,6 @@ const notificationPreferenceSchema = new mongoose.Schema({
   timezone: { type: String, default: 'UTC' },
 }, { timestamps: true });
 
-notificationPreferenceSchema.index({ user: 1 });
 notificationPreferenceSchema.index({ 'priceAlerts.marketId': 1, 'priceAlerts.triggered': 1 });
 
 module.exports = mongoose.model('NotificationPreference', notificationPreferenceSchema);

@@ -50,14 +50,14 @@ exports.buildBuyUrl = ({ user, amountUsd, paymentMethod }) => {
   const params = new URLSearchParams({
     apiKey: process.env.MOONPAY_API_KEY,
     currencyCode: getCurrencyCode(),
-    walletAddress: user.smartWallet?.proxy || user.depositAddresses?.evm || process.env.EVM_DEPOSIT_ADDRESS,
+    walletAddress: user.smartWallet?.proxy || user.depositAddresses?.evm || (() => { throw new Error('No deposit address available — user must have a proxy wallet or deposit address'); })(),
     baseCurrencyAmount: String(amountUsd),
     baseCurrencyCode: 'usd',
     paymentMethod,
     email: user.email || '',
     externalCustomerId: String(user._id),
     externalTransactionId: externalTxId,
-    redirectURL: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/deposit/moonpay/return`,
+    redirectURL: `${process.env.FRONTEND_URL}/deposit/moonpay/return`,
     showWalletAddressForm: 'false',
   });
 
@@ -147,11 +147,11 @@ exports.buildSellUrl = ({ user, amountUsdc, baseCurrencyCode = 'usd' }) => {
     currencyCode:          getCurrencyCode(),
     quoteCurrencyCode:     baseCurrencyCode,
     baseCurrencyAmount:    String(amountUsdc),
-    walletAddress:         user.walletAddress || '',
+    walletAddress:         user.smartWallet?.proxy || user.walletAddress || '',
     email:                 user.email || '',
     externalCustomerId:    String(user._id),
     externalTransactionId: externalTxId,
-    redirectURL: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/withdraw/moonpay/return`,
+    redirectURL: `${process.env.FRONTEND_URL}/withdraw/moonpay/return`,
     showWalletAddressForm: 'false',
   });
 

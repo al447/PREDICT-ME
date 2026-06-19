@@ -29,23 +29,33 @@ async function _getSigner() {
 }
 
 /**
- * Build + sign an EIP-712 CLOB market-buy order and submit it.
- * price: mid-market or 0.99 (willing to pay up to 99¢ per share → fills immediately).
+ * Build + sign an EIP-712 CLOB order and submit it.
+ * BUY:  price 0.99 fills against any ask ≤ 0.99 (market buy)
+ * SELL: price 0.01 fills against any bid ≥ 0.01 (market sell)
  */
-async function _placeOnChainOrder({ user, marketId, conditionId, tokenId, outcome, amount }) {
+async function _placeOnChainOrder({ user, marketId, conditionId, tokenId, outcome, amount, side = 'buy' }) {
   const signer = await _getSigner();
   const signerAddress = await signer.getAddress();
   const makerAddress = user?.smartWallet?.proxy || signerAddress;
 
-  // signatureType: 1=POLY_PROXY, 2=GNOSIS_SAFE, 0=EOA fallback
   const signatureType = user?.smartWallet?.signatureType ?? 0;
+  const isBuy = side === 'buy';
+  const sideNum = isBuy ? 0 : 1;
 
-  // Market buy: price 0.99 fills against any ask ≤ 0.99
-  const price = 0.99;
-  const size  = parseFloat(amount) / price; // shares purchased
+  // Market order pricing: use extreme price for immediate fill
+  const price = isBuy ? 0.99 : 0.01;
+  const size  = isBuy
+    ? parseFloat(amount) / price
+    : parseFloat(amount); // For sell, amount = shares to sell
 
-  const makerAmountBN = ethers.parseUnits(amount.toFixed(6), 6);
-  const takerAmountBN = ethers.parseUnits(size.toFixed(6), 6);
+  // BUY: maker gives USDC (makerAmount), wants shares (takerAmount)
+  // SELL: maker gives shares (makerAmount), wants USDC (takerAmount)
+  const makerAmountBN = isBuy
+    ? ethers.parseUnits(parseFloat(amount).toFixed(6), 6)
+    : ethers.parseUnits(size.toFixed(6), 6);
+  const takerAmountBN = isBuy
+    ? ethers.parseUnits(size.toFixed(6), 6)
+    : ethers.parseUnits((size * price).toFixed(6), 6);
 
   const salt     = BigInt(Math.floor(Math.random() * 1e15));
   const nonce    = BigInt(Date.now());
@@ -63,7 +73,7 @@ async function _placeOnChainOrder({ user, marketId, conditionId, tokenId, outcom
     expiration:    expiryTs,
     nonce,
     feeRateBps:    FEE_BPS,
-    side:          0, // buy
+    side:          sideNum,
     signatureType: BigInt(signatureType),
   };
 
@@ -72,7 +82,7 @@ async function _placeOnChainOrder({ user, marketId, conditionId, tokenId, outcom
   const { data } = await clobAPI.placeOrder({
     conditionId,
     tokenId,
-    side:          0,
+    side:          sideNum,
     price,
     size,
     maker:         makerAddress,
@@ -101,6 +111,7 @@ const useTradeStore = create((set, get) => ({
   lastMarketUpdate: null,
 
   fetchTrades: async (params = {}) => {
+    if (!localStorage.getItem('pb365_token')) return;
     set({ isLoading: true });
     try {
       const { data } = await tradesAPI.getMy(params);
@@ -112,6 +123,7 @@ const useTradeStore = create((set, get) => ({
   },
 
   fetchPositions: async () => {
+    if (!localStorage.getItem('pb365_token')) return;
     set({ isLoadingPositions: true });
     try {
       const { data } = await tradesAPI.getPositions();
@@ -126,12 +138,13 @@ const useTradeStore = create((set, get) => ({
    * Place a trade.
    * - When ONCHAIN_ENABLED=true and market has conditionId/tokenId → CLOB on-chain order.
    * - Otherwise → legacy off-chain MongoDB trade (fallback / paper trading).
+   * @param {string} side - 'buy' or 'sell'
    */
-  placeTrade: async (marketId, outcome, amount, candidate = null, market = null) => {
+  placeTrade: async (marketId, outcome, amount, candidate = null, market = null, side = 'buy') => {
     const { user, openAuthModal } = useAuthStore.getState();
     if (!user) { openAuthModal(); return false; }
     if (get().isPlacing) return false;
-    if (user.balance < amount) {
+    if (side === 'buy' && user.balance < amount) {
       toast.error('Insufficient balance');
       return false;
     }
@@ -139,15 +152,18 @@ const useTradeStore = create((set, get) => ({
 
     try {
       const conditionId = market?.conditionId;
-      const tokenId     = outcome === 'YES' ? market?.yesTokenId : market?.noTokenId;
+      // Fix: case-insensitive check for token matching
+      const isYes = outcome.toLowerCase() === 'yes';
+      const tokenId = isYes ? market?.yesTokenId : market?.noTokenId;
       const useOnChain  = ONCHAIN_ENABLED && conditionId && tokenId;
 
       if (useOnChain) {
-        const result = await _placeOnChainOrder({ user, marketId, conditionId, tokenId, outcome, amount });
+        const result = await _placeOnChainOrder({ user, marketId, conditionId, tokenId, outcome, amount, side });
         if (result.success) {
           useAuthStore.getState().refreshBalance();
+          get().fetchPositions();
           const label = candidate ? `${candidate} ${outcome}` : outcome;
-          toast.success(`${outcome} order placed on-chain for $${amount}`);
+          toast.success(`${side === 'buy' ? 'Buy' : 'Sell'} ${outcome} order placed on-chain for $${amount}`);
           return result;
         }
         toast.error(result.error || 'On-chain order failed');
@@ -155,18 +171,19 @@ const useTradeStore = create((set, get) => ({
       }
 
       // Legacy off-chain path
-      const payload = { marketId, outcome, amount };
+      const payload = { marketId, outcome, amount, side };
       if (candidate) payload.candidate = candidate;
       const { data } = await tradesAPI.place(payload);
       if (data.success) {
         useAuthStore.getState().updateBalance(data.newBalance);
         useAuthStore.getState().refreshBalance();
+        get().fetchPositions();
         if (data.market) {
           set({ lastMarketUpdate: data.market });
         }
         const shares = data.trade?.shares?.toFixed(2) || '0';
         const label = candidate ? `${candidate} ${outcome}` : outcome;
-        toast.success(`Bought ${shares} ${label} shares for $${amount}`);
+        toast.success(`${side === 'buy' ? 'Bought' : 'Sold'} ${shares} ${label} shares for $${amount}`);
         return data;
       }
     } catch (err) {

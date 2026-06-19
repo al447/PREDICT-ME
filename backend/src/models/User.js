@@ -39,7 +39,7 @@ const userSchema = new mongoose.Schema(
       owner:         { type: String, default: null },   // EOA that owns the proxy
       proxy:         { type: String, default: null },   // Deployed proxy address (deposit destination)
       deployed:      { type: Boolean, default: false }, // true after first on-chain deployment
-      chainId:       { type: Number, default: 80002 },
+      chainId:       { type: Number, default: 137 },  // Mainnet only (137)
       proxyType:     { type: String, enum: ['poly', 'safe'], default: 'safe' }, // 'poly'=POLY_PROXY(sigType1), 'safe'=GnosisSafe(sigType2)
       signatureType: { type: Number, enum: [1, 2], default: 2 },               // 1=POLY_PROXY, 2=GNOSIS_SAFE
     },

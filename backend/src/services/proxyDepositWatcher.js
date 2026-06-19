@@ -20,11 +20,11 @@ const { ethers } = require('ethers');
 const User = require('../models/User');
 const balanceSyncService = require('./balanceSyncService');
 const walletService = require('./walletService');
-const { ADDRESSES, ABIS, RPC_URL } = require('../config/contracts');
+const { ADDRESSES, ABIS, RPC_URL, getPolygonProvider } = require('../config/contracts');
 
 const POLL_MS      = parseInt(process.env.PROXY_DEPOSIT_POLL_MS || '15000', 10);
 const MIN_CONF     = parseInt(process.env.DEPOSIT_MIN_CONFIRMATIONS || '3', 10);
-const USDC_ADDRESS = ADDRESSES.MOCK_USDC;
+const USDC_ADDRESS = ADDRESSES.USDC;
 
 // ERC-20 Transfer event topic
 const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
@@ -34,7 +34,7 @@ let _pollTimer  = null;
 let _lastBlock  = 0;
 
 function getProvider() {
-  if (!_provider) _provider = new ethers.JsonRpcProvider(RPC_URL);
+  if (!_provider) _provider = getPolygonProvider();
   return _provider;
 }
 

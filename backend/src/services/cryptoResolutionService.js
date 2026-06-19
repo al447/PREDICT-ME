@@ -88,7 +88,17 @@ const resolveOne = async (market) => {
 
     if (!updated) return 'skipped'; // already resolved by someone else
 
-    // Note: Legacy off-chain settlement removed. Users redeem positions on-chain via Conditional Tokens.
+    // Settle paper trades (credit winnings to User.balance). On-chain CLOB
+    // positions carry a conditionId and are redeemed on-chain (skipped here).
+    try {
+      const settlementService = require('./settlementService');
+      const settle = await settlementService.settleMarket(updated, { outcome });
+      if (settle.settledTradeCount > 0) {
+        console.log(`[CryptoResolution] Settled ${settle.settledTradeCount} paper trades, paid $${settle.totalPaid.toFixed(2)}`);
+      }
+    } catch (err) {
+      console.error(`[CryptoResolution] Settlement failed for "${market.title}": ${err.message}`);
+    }
 
     console.log(
       `[CryptoResolution] Auto-resolved "${market.title}" → ${outcome.toUpperCase()} ` +

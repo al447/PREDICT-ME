@@ -53,7 +53,7 @@ const EXPLORERS = {
   ethereum:       { mode: 'v2',  chainId: 1 },
   sepolia:        { mode: 'v2',  chainId: 11155111 },
   polygon:        { mode: 'v2',  chainId: 137 },
-  'polygon-amoy': { mode: 'v2',  chainId: 80002 },
+  // polygon-amoy removed — mainnet only
   arbitrum:       { mode: 'v2',  chainId: 42161 },
   // maxNativeBlocks kept small: full-block RPC fetches are memory-heavy on Render 512MB.
   // Cron persistence ensures no deposits are missed across restarts.
@@ -71,9 +71,7 @@ const TOKEN_CONFIGS = {
   sepolia: {
     USDC: { address: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', decimals: 6 },
   },
-  'polygon-amoy': {
-    USDC: { address: '0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582', decimals: 6 }, // Circle's official Amoy USDC
-  },
+  // polygon-amoy removed — mainnet only
   ethereum: {
     USDC: { address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals: 6 },
     USDT: { address: '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6 },
@@ -191,7 +189,9 @@ const getProvider = (chain) => {
   const url = urls[idx] || urls[0];
   // batchMaxCount: 3 — full getBlock(n,true) responses are large; keep batches tiny
   // to avoid OOM on Render's 512 MB free tier.
-  _providers[chain] = new ethers.JsonRpcProvider(url, undefined, { batchMaxCount: 3 });
+  // staticNetwork (via createProvider) skips eth_chainId detection, which fails on Node 25.
+  const { createProvider, CHAIN_ID_BY_NAME } = require('../config/contracts');
+  _providers[chain] = createProvider(url, CHAIN_ID_BY_NAME[chain], { batchMaxCount: 3 });
   return _providers[chain];
 };
 
@@ -770,19 +770,11 @@ const start = () => {
   console.log('[DepositIndexer] Starting auto-indexer...');
   console.log(`[DepositIndexer] Watching wallet: ${PLATFORM_WALLET}`);
 
-  // Scan testnets frequently (30s), mainnets less often (5min)
-  const TESTNETS = ['sepolia', 'polygon-amoy'];
+  // Mainnet chains only — Amoy/testnet chains removed
   const MAINNETS = ['ethereum', 'polygon', 'bsc', 'base', 'arbitrum'];
 
   const safeScan = (chain) =>
     scanDeposits(chain).catch(err => console.error(`[DepositIndexer] scanDeposits(${chain}) unhandled error:`, err.message));
-
-  TESTNETS.forEach(chain => {
-    if (RPC_URLS[chain]) {
-      setInterval(() => safeScan(chain), 30_000);
-      safeScan(chain); // Initial scan
-    }
-  });
 
   // Base and BSC use direct RPC (no Etherscan V2) — scan less aggressively to
   // avoid hitting public RPC rate limits (publicnode: 1200 req/60s).
@@ -804,8 +796,7 @@ const start = () => {
     }
   });
 
-  // CTF ERC-1155 position indexer — scans Polygon Amoy every 60s
-  // (Amoy is a testnet using a free public RPC; 60s is conservative enough to avoid 429s)
+  // CTF ERC-1155 position indexer — scans Polygon mainnet
   if (process.env.CTF_ADDRESS) {
     setTimeout(() => {
       setInterval(() => scanCtfPositions().catch(err => console.error('[DepositIndexer] CTF scan error:', err.message)), 60_000);
@@ -866,13 +857,14 @@ const ERC1155_ABI = [
   'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)',
 ];
 
-const CTF_POSITION_CURSOR_KEY = 'ctf-positions-amoy';
+const CTF_POSITION_CURSOR_KEY = 'ctf-positions-polygon';
 
 /**
  * Apply a single ERC-1155 transfer to UserPosition records.
  * Mints (from == 0x0) add to balance; burns (to == 0x0) subtract.
  */
 async function _applyCtfTransfer({ from, to, tokenId, value, txHash, blockNumber }) {
+  if (tokenId == null || value == null) return; // guard against malformed event args
   const tokenIdStr = tokenId.toString();
   const valueNum   = Number(ethers.formatUnits(value, 6)); // 6-decimal shares
 
@@ -915,7 +907,7 @@ async function _applyCtfTransfer({ from, to, tokenId, value, txHash, blockNumber
 }
 
 /**
- * Scan CTF ERC-1155 TransferSingle + TransferBatch events on Polygon Amoy.
+ * Scan CTF ERC-1155 TransferSingle + TransferBatch events on Polygon mainnet.
  * Keeps a separate cursor under CTF_POSITION_CURSOR_KEY.
  */
 const scanCtfPositions = async () => {
@@ -924,9 +916,9 @@ const scanCtfPositions = async () => {
   const ctfAddress = process.env.CTF_ADDRESS;
   if (!ctfAddress) return;
 
-  const chain = 'polygon-amoy';
+  const chain = 'polygon';
   if (isOnCooldown(chain)) {
-    console.log('[DepositIndexer] polygon-amoy on cooldown — skipping CTF scan');
+    console.log('[DepositIndexer] polygon on cooldown — skipping CTF scan');
     return;
   }
 
@@ -961,7 +953,9 @@ const scanCtfPositions = async () => {
 
     for (const ev of batchEvents) {
       const { from, to, ids, values } = ev.args;
+      if (!ids || !values) continue; // guard against malformed batch args
       for (let i = 0; i < ids.length; i++) {
+        if (ids[i] == null || values[i] == null) continue; // skip null entries
         await _applyCtfTransfer({ from, to, tokenId: ids[i], value: values[i], txHash: ev.transactionHash, blockNumber: ev.blockNumber });
       }
     }

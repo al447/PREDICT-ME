@@ -27,6 +27,16 @@ const AGGREGATOR_ABI = [
 
 // ── Provider pool ────────────────────────────────────────────────────────────
 // One JsonRpcProvider per RPC URL; lazy-created and reused to avoid socket churn.
+// RPC env var → chainId, so we can skip eth_chainId detection (fails on Node 25).
+const _RPC_ENV_CHAIN_ID = {
+  ETH_RPC: 1,
+  POLYGON_RPC: 137,
+  POLYGON_RPC_URL: 137,
+  ARB_RPC: 42161,
+  BSC_RPC: 56,
+  BASE_RPC: 8453,
+};
+
 const _providers = {};
 function getProvider(rpcEnvKey) {
   const url = process.env[rpcEnvKey];
@@ -34,7 +44,8 @@ function getProvider(rpcEnvKey) {
   if (!_providers[url]) {
     // Disable batching: free-tier public RPCs (drpc.org, publicnode.com) reject
     // batch requests. StaticNetwork skips the eth_chainId discovery call.
-    _providers[url] = new ethers.JsonRpcProvider(url, undefined, { batchMaxCount: 1 });
+    const { createProvider } = require('../config/contracts');
+    _providers[url] = createProvider(url, _RPC_ENV_CHAIN_ID[rpcEnvKey], { batchMaxCount: 1 });
   }
   return _providers[url];
 }

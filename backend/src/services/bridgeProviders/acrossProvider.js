@@ -16,22 +16,24 @@ const { ethers } = require('ethers');
 const BASE_URL = process.env.ACROSS_API_URL || 'https://app.across.to/api';
 
 // Across SpokePool addresses per chain (verified mainnet)
+// Source: https://docs.across.to/reference/contract-addresses/mainnet-chain-contracts
+// Polymarket-compatible: Ethereum, Base, Arbitrum, Optimism, Polygon
 const SPOKE_POOLS = {
   1:     '0x5c7BCd6E7De5423a257D81B442095A1a6ced35C5', // Ethereum
-  8453:  '0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64', // Base
+  8453:  '0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64', // Base (verified Across v2.5)
   42161: '0xe35e9842fceaCA96570B734083f4a58e8F7C5f2A', // Arbitrum
   10:    '0x6f26Bf09B1C792e3228e5467807a900A503c0281', // Optimism
-  43114: '0x1Cb2cB0Bb2f7fDCB8a5b26cCcCd4A05bE1aF18B0', // Avalanche
+  // Note: Avalanche (43114) removed - not in Polymarket's official supported chains
   137:   '0x9295ee1d8C5b022Be115A2AD3c30C72E34e7F096', // Polygon (direct, no bridge needed)
 };
 
 // USDC token addresses per source chain for fill calldata
+// Polymarket-compatible chains only
 const USDC_ADDRESSES = {
-  1:     '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-  8453:  '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-  42161: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
-  10:    '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
-  43114: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E',
+  1:     '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',   // Ethereum
+  8453:  '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',   // Base
+  42161: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',   // Arbitrum
+  10:    '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',   // Optimism
 };
 
 const DEST_CHAIN_ID = 137; // Polygon mainnet — USDC destination
@@ -120,6 +122,7 @@ async function getStatus(depositTxHash, fromChainId) {
     return {
       status:       mapStatus(data.status),
       fillTxHash:   data.fillTx || null,
+      outputAmount: data.fillAmount || data.outputAmount || null, // base units (6 dec USDC)
       destChainId:  DEST_CHAIN_ID,
       provider:     'across',
       raw:          data,
@@ -132,8 +135,9 @@ async function getStatus(depositTxHash, fromChainId) {
 function mapStatus(s) {
   if (!s) return 'pending';
   const l = s.toLowerCase();
-  if (l === 'filled')  return 'completed';
-  if (l === 'expired' || l === 'failed') return 'failed';
+  if (l === 'filled' || l === 'completed') return 'filled';  // sweepService checks 'filled'|'completed'
+  if (l === 'expired') return 'expired';
+  if (l === 'failed')  return 'failed';
   return 'pending';
 }
 

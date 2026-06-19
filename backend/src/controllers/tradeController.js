@@ -6,7 +6,30 @@ const MarketPriceSnapshot = require('../models/MarketPriceSnapshot');
 const walletService = require('../services/walletService');
 const balanceSyncService = require('../services/balanceSyncService');
 
-// ── Recompute binary outcome prices using Laplace-smoothed ratio ──
+// ── Virtual Liquidity AMM for PredictMe ──────────────────────────────────────
+// PredictMe uses a VIRTUAL LIQUIDITY model instead of pure LMSR.
+// 
+// The key insight: we start with a "virtual pool" of liquidity on each side.
+// This means the market behaves as if there's already significant trading volume,
+// preventing small trades from dominating prices.
+//
+// For binary: price_yes = (yesVol + V) / (yesVol + noVol + 2*V)
+// where V = virtual liquidity per side (default $1000)
+//
+// For grouped (e.g., World Cup with 32 candidates):
+// price_i = (vol_i + V * polymarket_prob_i/100) / sum(vol_j + V * polymarket_prob_j/100)
+// where V = total virtual liquidity pool ($50K), anchored to Polymarket probabilities
+//
+// This means:
+// - With V=$1000, a $5 buy on a 50/50 market moves price from 50% to 50.25%
+// - With V=$1000, a $1000 buy moves price from 50% to 66.7%
+// - A market needs ~$2000+ on one side to reach 75%
+//
+// Configurable via env: VIRTUAL_LIQUIDITY_USD (default 1000 for binary, 50000 for grouped)
+const VIRTUAL_LIQUIDITY = parseFloat(process.env.VIRTUAL_LIQUIDITY_USD || '1000');
+const VIRTUAL_LIQUIDITY_GROUPED = parseFloat(process.env.VIRTUAL_LIQUIDITY_GROUPED_USD || '50000');
+
+// ── Recompute binary outcome prices using Virtual Liquidity AMM ──
 const recomputePrices = async (marketId) => {
   const agg = await Trade.aggregate([
     { $match: { market: new mongoose.Types.ObjectId(marketId), status: 'open', type: 'buy' } },
@@ -14,33 +37,70 @@ const recomputePrices = async (marketId) => {
   ]);
   const yesVol = agg.find((a) => a._id === 'yes')?.totalAmount || 0;
   const noVol = agg.find((a) => a._id === 'no')?.totalAmount || 0;
-  let yesPrice = Math.round(100 * (yesVol + 1) / (yesVol + noVol + 2));
+
+  // Virtual Liquidity AMM: price = (vol + V) / (total_vol + N*V)
+  // N = number of outcomes (2 for binary)
+  const V = VIRTUAL_LIQUIDITY;
+  let yesPrice = Math.round(100 * (yesVol + V) / (yesVol + noVol + 2 * V));
   yesPrice = Math.max(1, Math.min(99, yesPrice));
   const noPrice = 100 - yesPrice;
   return { yesPrice, noPrice };
 };
 
-// ── Recompute candidate probabilities for grouped markets ──────────────────
-// Uses the ratio of YES-vote amounts across all candidates (normalised to 100%).
+// ── Recompute candidate probabilities for grouped markets ────────────────────
+// Uses Polymarket-synced probabilities as a deep virtual liquidity anchor.
+// Virtual shares per candidate = VIRTUAL_LIQUIDITY_GROUPED × (polymarket_prob / 100)
+// Real PredictMe trades add on top of these virtual shares, then we re-normalise.
+//
+// Example (World Cup, France at 8% on Polymarket, $50K virtual pool):
+//   France virtual shares = $50,000 × 0.08 = $4,000
+//   After $5 buy:  ($4,000 + $5) / ($50,000 + $5) = 8.01%  ← barely moves
+//   After $500 buy: ($4,000 + $500) / ($50,000 + $500) = 8.91%  ← noticeable
+//   After $5000 buy: ($4,000 + $5000) / ($50,000 + $5000) = 16.4% ← significant
 const recomputeGroupedCandidatePrices = async (marketId) => {
+  const market = await Market.findById(marketId).select('candidates').lean();
+  const candidates = market?.candidates || [];
+  if (!candidates.length) return {};
+
   const agg = await Trade.aggregate([
     { $match: { market: new mongoose.Types.ObjectId(marketId), status: 'open', type: 'buy', outcome: 'Yes' } },
     { $group: { _id: '$candidate', totalAmount: { $sum: '$amount' } } },
   ]);
-  const totalYesAmount = agg.reduce((s, a) => s + a.totalAmount, 0);
-  const priceMap = {};
+
+  const tradeMap = {};
   for (const a of agg) {
-    if (!a._id) continue;
-    let p = totalYesAmount > 0 ? Math.round(100 * a.totalAmount / totalYesAmount) : 1;
-    p = Math.max(1, Math.min(99, p));
-    priceMap[a._id] = p;
+    if (a._id) tradeMap[a._id] = a.totalAmount;
   }
-  return priceMap; // { candidateName: probability }
+
+  // Virtual shares per candidate anchored to Polymarket probability
+  const V = VIRTUAL_LIQUIDITY_GROUPED;
+  const shares = [];
+  let totalShares = 0;
+
+  for (const c of candidates) {
+    // Use Polymarket-synced probability as anchor weight (minimum 0.5% to avoid zero)
+    const baseProb = Math.max(c.probability ?? 1, 0.5);
+    const virtualShares = V * (baseProb / 100);
+    const realShares = tradeMap[c.name] || 0;
+    const combined = virtualShares + realShares;
+    shares.push({ name: c.name, combined });
+    totalShares += combined;
+  }
+
+  const priceMap = {};
+  for (const s of shares) {
+    let p = totalShares > 0 ? Math.round(100 * s.combined / totalShares) : 1;
+    p = Math.max(1, Math.min(99, p));
+    priceMap[s.name] = p;
+  }
+
+  return priceMap;
 };
 
 const placeTrade = async (req, res, next) => {
   try {
-    const { marketId, outcome, candidate, amount, idempotencyKey } = req.body;
+    const { marketId, outcome, candidate, amount, idempotencyKey, side: rawSide } = req.body;
+    const side = (rawSide === 'sell') ? 'sell' : 'buy';
     const userId = req.user._id;
     const parsedAmount = parseFloat(amount);
 
@@ -100,27 +160,60 @@ const placeTrade = async (req, res, next) => {
     } else {
       normalizedOutcome = outcome.charAt(0).toUpperCase() + outcome.slice(1).toLowerCase();
       const outcomeObj = market.outcomes.find((o) => o.name.toLowerCase() === normalizedOutcome.toLowerCase());
-      if (!outcomeObj) return res.status(400).json({ success: false, error: 'Invalid outcome. Must be Yes or No.' });
+      if (!outcomeObj) return res.status(400).json({ success: false, error: `Invalid outcome "${normalizedOutcome}". Valid: ${market.outcomes.map(o=>o.name).join(', ')}` });
       outcomePrice = outcomeObj.price;
     }
 
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ success: false, error: 'User not found' });
-    if (user.balance < parsedAmount) {
-      return res.status(400).json({ success: false, error: `Insufficient balance. You have $${user.balance.toFixed(2)}` });
-    }
 
     const price = outcomePrice / 100;
+
+    // For sell: parsedAmount = dollar amount the user wants to receive,
+    // shares = number of shares to sell. Verify user has enough position.
+    if (side === 'sell') {
+      const existingPosition = await Trade.aggregate([
+        { $match: { user: new mongoose.Types.ObjectId(userId), market: new mongoose.Types.ObjectId(marketId), outcome: normalizedOutcome, candidate: normalizedCandidate, status: 'open' } },
+        { $group: { _id: null, totalShares: { $sum: '$shares' } } },
+      ]);
+      const ownedShares = existingPosition[0]?.totalShares || 0;
+      const sharesToSell = price > 0 ? parsedAmount / price : 0;
+      if (sharesToSell > ownedShares) {
+        return res.status(400).json({ success: false, error: `Insufficient shares. You own ${ownedShares.toFixed(2)} shares.` });
+      }
+    } else {
+      if (user.balance < parsedAmount) {
+        return res.status(400).json({ success: false, error: `Insufficient balance. You have $${user.balance.toFixed(2)}` });
+      }
+    }
+
     const shares = price > 0 ? parsedAmount / price : 0;
 
+    // Determine if this is a genuine on-chain binary market settled via the CLOB.
+    // Only such trades skip the paper-balance debit (the on-chain CLOB deducts from
+    // the proxy wallet and balanceSyncService mirrors it to User.balance). Grouped
+    // and non-on-chain markets are paper-traded through this endpoint and MUST debit
+    // User.balance here — otherwise the balance never changes (real-money trades go
+    // through /clob/order, never this endpoint).
+    const isOnChainBinary = !isGrouped &&
+      process.env.ONCHAIN_ENABLED === 'true' &&
+      market.onChain === true &&
+      market.token0 &&
+      market.token1;
+
     let updatedUser;
-    if (process.env.ONCHAIN_ENABLED === 'true') {
-      // On-chain mode: balance is a cached mirror from chain — do NOT debit here.
-      // The on-chain CLOB deducts from the proxy wallet; balanceSyncService will
-      // update User.balance after settlement. Just verify cached balance is sufficient.
+    if (isOnChainBinary) {
       updatedUser = user;
+    } else if (side === 'sell') {
+      // Sell: credit user balance with proceeds (amount at current price)
+      const proceeds = parsedAmount;
+      updatedUser = await User.findOneAndUpdate(
+        { _id: userId },
+        { $inc: { balance: proceeds } },
+        { new: true }
+      );
     } else {
-      // Legacy paper-trading: atomic balance deduction
+      // Buy: atomic balance deduction
       updatedUser = await User.findOneAndUpdate(
         { _id: userId, balance: { $gte: parsedAmount } },
         { $inc: { balance: -parsedAmount } },
@@ -143,10 +236,10 @@ const placeTrade = async (req, res, next) => {
       market: marketId,
       outcome: normalizedOutcome,
       candidate: normalizedCandidate,
-      amount: parsedAmount,
+      amount: side === 'sell' ? -parsedAmount : parsedAmount,
       price: outcomePrice,
-      shares,
-      type: 'buy',
+      shares: side === 'sell' ? -shares : shares,
+      type: side,
       status: 'open',
       ...(idempotencyKey ? { idempotencyKey } : {}),
     });
@@ -157,13 +250,6 @@ const placeTrade = async (req, res, next) => {
     });
 
     let updatedMarket = market;
-
-    // Determine if this is an on-chain binary market (CLOB owns the price)
-    const isOnChainBinary = !isGrouped &&
-      process.env.ONCHAIN_ENABLED === 'true' &&
-      market.onChain === true &&
-      market.token0 &&
-      market.token1;
 
     if (isOnChainBinary) {
       // CLOB owns the price via clobPriceService.syncMarketPrice — skip legacy AMM recompute
@@ -226,7 +312,9 @@ const placeTrade = async (req, res, next) => {
     await trade.populate('market', 'title slug categorySlug outcomes candidates');
 
     // Post-trade balance sync from chain (async, non-blocking)
-    if (process.env.ONCHAIN_ENABLED === 'true') {
+    // Only sync for on-chain binary trades where the balance is a chain mirror.
+    // For paper trades (grouped/off-chain), User.balance is the source of truth.
+    if (process.env.ONCHAIN_ENABLED === 'true' && isOnChainBinary) {
       balanceSyncService.syncUser(updatedUser).catch(err =>
         console.warn('[Trade] Post-trade balance sync failed:', err.message)
       );
@@ -476,4 +564,98 @@ const getActivity = async (req, res, next) => {
   }
 };
 
-module.exports = { placeTrade, getMyTrades, getPositions, getLeaderboard, getActivity };
+// GET /api/trades/positions/redeemable — Get positions that can be redeemed (resolved markets with winnings)
+const getRedeemablePositions = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+
+    // Find trades that are:
+    // 1. Won (status: 'won') - paper trades auto-settled
+    // 2. Or have conditionId (on-chain) that need manual redeem
+    // Only for resolved markets
+    const positions = await Trade.aggregate([
+      {
+        $match: {
+          user: new mongoose.Types.ObjectId(userId),
+          status: { $in: ['open', 'won', 'lost'] },
+        },
+      },
+      { $lookup: { from: 'markets', localField: 'market', foreignField: '_id', as: 'market' } },
+      { $unwind: '$market' },
+      // Only resolved markets
+      { $match: { 'market.status': 'resolved' } },
+      {
+        $group: {
+          _id: { market: '$market', outcome: '$outcome', candidate: { $ifNull: ['$candidate', null] } },
+          totalAmount: { $sum: '$amount' },
+          totalShares: { $sum: '$shares' },
+          trades: { $push: '$$ROOT' },
+          hasWon: { $max: { $cond: [{ $eq: ['$status', 'won'] }, 1, 0] } },
+          hasOpen: { $max: { $cond: [{ $eq: ['$status', 'open'] }, 1, 0] } },
+        },
+      },
+      { $sort: { 'market.resolvedAt': -1 } },
+    ]);
+
+    const result = positions
+      .map((p) => {
+        const market = p._id.market;
+        const isWinningOutcome = p._id.outcome.toLowerCase() === market.resolvedOutcome;
+        const isGroupedWinner = p._id.candidate && market.resolvedOutcome === 'yes' && market.winningCandidate === p._id.candidate;
+        const isWinning = isWinningOutcome || isGroupedWinner;
+
+        // Calculate claimable amount
+        let claimableAmount = 0;
+        let status = 'not_claimable';
+
+        if (p.hasWon) {
+          // Paper trade - already auto-credited via settlementService
+          claimableAmount = p.totalShares; // $1 per share
+          status = 'auto_redeemed';
+        } else if (p.hasOpen && isWinning) {
+          // On-chain position that needs redeem
+          claimableAmount = p.totalShares; // $1 per share
+          status = 'claimable';
+        } else if (p.hasOpen && !isWinning) {
+          // Losing position
+          claimableAmount = 0;
+          status = 'lost';
+        }
+
+        return {
+          _id: `${market._id}-${p._id.outcome}-${p._id.candidate || 'na'}`,
+          market: {
+            _id: market._id,
+            title: market.title,
+            slug: market.slug,
+            categorySlug: market.categorySlug,
+            image: market.image,
+            status: market.status,
+            resolvedOutcome: market.resolvedOutcome,
+            resolvedAt: market.resolvedAt,
+          },
+          outcome: p._id.outcome,
+          candidate: p._id.candidate,
+          totalShares: p.totalShares,
+          claimableAmount,
+          status,
+          conditionId: market.conditionId,
+          // Token ID for redeeming (YES=token0, NO=token1)
+          tokenId: p._id.outcome.toLowerCase() === 'yes' ? market.token0 : market.token1,
+        };
+      })
+      .filter((p) => p.status === 'auto_redeemed' || p.status === 'claimable');
+
+    const totalClaimable = result.reduce((sum, p) => sum + p.claimableAmount, 0);
+
+    res.json({
+      success: true,
+      positions: result,
+      totalClaimable,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+module.exports = { placeTrade, getMyTrades, getPositions, getRedeemablePositions, getLeaderboard, getActivity };

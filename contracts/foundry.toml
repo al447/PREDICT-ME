@@ -55,3 +55,15 @@ runs = 256
 [profile.script]
 src = "contracts"
 optimizer_runs = 200
+via_ir = true
+
+# Named RPC endpoints: forge script --rpc-url amoy|polygon
+[rpc_endpoints]
+amoy    = "${POLYGON_AMOY_RPC_URL}"
+polygon = "${POLYGON_RPC_URL}"
+
+# Contract verification (forge script --verify). Single Polygonscan key works
+# for both chains via the chain-specific verifier URLs.
+[etherscan]
+amoy    = { key = "${POLYGONSCAN_API_KEY}", chain = 80002, url = "https://api-amoy.polygonscan.com/api" }
+polygon = { key = "${POLYGONSCAN_API_KEY}", chain = 137 }

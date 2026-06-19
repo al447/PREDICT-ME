@@ -313,7 +313,7 @@ const recordTradeForReferral = async ({ refereeUserId, tradeId, tradeAmount }) =
   const config = await getOrCreateConfig();
   if (!config.enabled) return { success: false, reason: 'disabled' };
 
-  const referral = await Referral.findOne({ referee: refereeUserId });
+  let referral = await Referral.findOne({ referee: refereeUserId });
   if (!referral) return { success: false, reason: 'no_referral_record' };
 
   // Update qualifying volume atomically to prevent concurrent-trade race
@@ -325,10 +325,12 @@ const recordTradeForReferral = async ({ refereeUserId, tradeId, tradeAmount }) =
     );
     if (updated && updated.qualifyingTradeVolume >= config.qualifyingTradeThreshold) {
       await creditQualifyingReferral(referral._id);
+      // Re-fetch to get updated status for commission processing below
+      referral = await Referral.findById(referral._id);
     }
   }
 
-  // Commission only for qualified referrals
+  // Commission only for qualified referrals (re-check after potential qualification above)
   if (referral.status === 'qualified') {
     // Check for duplicate commission
     const existing = await ReferralCommission.findOne({ trade: tradeId });
@@ -470,7 +472,7 @@ const getUserDashboard = async (userId) => {
 
   return {
     code: refCode?.code || null,
-    link: refCode?.code ? `${process.env.FRONTEND_URL || 'http://localhost:5173'}/?ref=${refCode.code}` : null,
+    link: refCode?.code ? `${process.env.FRONTEND_URL || ''}/?ref=${refCode.code}` : null,
     totalEarned: user?.referralStats?.totalEarned || 0,
     totalReferred: refCode?.totalReferred || 0,
     pendingReferred: refCode?.pendingReferred || 0,

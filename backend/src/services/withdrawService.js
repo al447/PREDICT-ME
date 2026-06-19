@@ -15,6 +15,11 @@ const debridge  = require('./bridgeProviders/debridgeProvider');
 const MIN_WITHDRAW_USD   = parseFloat(process.env.BRIDGE_MIN_WITHDRAW_USD || '10');
 const MAX_WITHDRAW_USD   = parseFloat(process.env.BRIDGE_MAX_WITHDRAW_USD || '100000');
 
+// Network configuration — mainnet only
+const IS_MAINNET = true;
+const POLYGON_CHAIN_ID = 137;
+const POLYGON_USDC = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359'; // Mainnet native USDC
+
 /**
  * Get a withdrawal quote.
  * @param {object} params
@@ -31,15 +36,15 @@ async function getQuote({ fromAmountUsdc, toChainType, toChainId, toToken, recip
 
   if (toChainType === 'evm') {
     const primary = await across.getQuote({
-      fromChainId:  137,       // Polygon (Safe)
-      inputToken:   '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', // USDC on Polygon
+      fromChainId:  POLYGON_CHAIN_ID,       // Polygon (Safe)
+      inputToken:   POLYGON_USDC,          // USDC on Polygon
       outputToken:  resolveDestToken(toChainId, toToken),
       amount:       amountBase,
       recipient:    recipientAddr,
     });
     const fallback = await debridge.getQuote({
-      fromChainId:      137,
-      srcTokenAddress:  '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
+      fromChainId:      POLYGON_CHAIN_ID,
+      srcTokenAddress:  POLYGON_USDC,
       dstTokenAddress:  resolveDestToken(toChainId, toToken),
       srcTokenAmount:   amountBase,
       recipient:        recipientAddr,
@@ -88,14 +93,17 @@ async function executeWithdrawal(userId, { fromAmountUsdc, toChainType, toChainI
   if (!proxyAddress) {
     throw new Error('[Withdraw] No smart wallet provisioned — deposit first.');
   }
-  if (!userSignature) {
-    throw new Error('[Withdraw] Missing signature. A signed Safe authorization is required to debit your wallet.');
-  }
 
-  // On-chain Safe balance is the source of truth
+  // Determine which balance backs this withdrawal:
+  //   - On-chain funds: proxy holds real USDC → balance is chain-mirrored. We MUST
+  //     debit on-chain (proxy → operator) so balanceSyncService stays truthful.
+  //   - Paper balance: no proxy USDC (default demo/testnet balance) → debit the
+  //     cached User.balance directly (balanceSyncService skips paper-only users,
+  //     so the debit persists across refresh).
   const balSync = require('./balanceSyncService');
   const onchainBalance = await balSync.readOnchainBalance(proxyAddress);
-  const effectiveBalance = onchainBalance !== null ? onchainBalance : (user.balance || 0);
+  const hasOnChainFunds = onchainBalance !== null && onchainBalance > 0;
+  const effectiveBalance = hasOnChainFunds ? onchainBalance : (user.balance || 0);
   if (effectiveBalance < fromAmountUsdc) {
     throw new Error(`[Withdraw] Insufficient balance: have ${effectiveBalance.toFixed(2)}, need ${fromAmountUsdc}`);
   }
@@ -103,18 +111,22 @@ async function executeWithdrawal(userId, { fromAmountUsdc, toChainType, toChainI
   // Enforce withdrawalLimits
   enforceWithdrawalLimits(user, fromAmountUsdc);
 
-  // ── Step 1: Debit the Safe (proxy → operator) using the user's signature ──
-  // This is the SAME signed Safe-transfer used by the same-chain withdrawal path.
-  // The user's on-chain USDC actually moves to the operator, so there is no
-  // operator-funded leak and the DB balance does not need a (sync-erasable) $inc.
-  //
-  // Gated on BRIDGE_SWEEP_ENABLED so the debit stays consistent with the bridge
-  // step: in simulation/mock mode (sweep disabled) executeAsync does NOT perform a
-  // real bridge, so we must NOT perform a real Safe debit either (otherwise the
-  // user's funds would leave the Safe with nothing delivered to the destination).
   const sweepEnabled = process.env.BRIDGE_SWEEP_ENABLED === 'true';
   let safeDebitTxHash = null;
-  if (sweepEnabled) {
+
+  if (hasOnChainFunds) {
+    // ── Real on-chain debit (proxy → operator) using the user's signature ──
+    // The user's on-chain USDC moves to the operator; balanceSyncService then
+    // mirrors the reduced proxy balance into User.balance.
+    if (!userSignature) {
+      throw new Error('[Withdraw] Missing signature. A signed Safe authorization is required to debit your wallet.');
+    }
+    // Mainnet safety: refuse if the bridge can't run (would strand funds at the
+    // operator with nothing delivered to the destination chain).
+    if (IS_MAINNET && !sweepEnabled) {
+      throw new Error('[Withdraw] Bridging is disabled — withdrawals temporarily unavailable.');
+    }
+
     const { getOperatorAddress } = require('../config/contracts');
     const withdrawalService = require('./withdrawalService');
     const operatorAddress = getOperatorAddress();
@@ -129,10 +141,29 @@ async function executeWithdrawal(userId, { fromAmountUsdc, toChainType, toChainI
     } catch (err) {
       throw new Error(`[Withdraw] Safe debit failed: ${err.message}`);
     }
-    // Reflect the on-chain debit in the cached balance immediately.
-    balSync.syncUser(userId).catch(() => {});
+    // Reflect the on-chain debit in the cached balance immediately (force-sync to
+    // bypass the paper-only guard, since this user has on-chain proxy funds).
+    await balSync.syncUser(userId, { force: true }).catch(() => {});
   } else {
-    console.warn(`[Withdraw] BRIDGE_SWEEP_ENABLED=false — simulating withdrawal of ${fromAmountUsdc} USDC (no Safe debit, no bridge) for user ${userId}`);
+    // ── Paper-balance withdrawal (no on-chain proxy funds) ──
+    // Only permitted off-mainnet. Debit the cached balance to simulate the
+    // withdrawal end-to-end (the cross-chain bridge is simulated below).
+    if (IS_MAINNET) {
+      throw new Error('[Withdraw] Insufficient on-chain balance — deposit funds before withdrawing.');
+    }
+    const debited = await User.findOneAndUpdate(
+      { _id: userId, balance: { $gte: fromAmountUsdc } },
+      { $inc: { balance: -fromAmountUsdc } },
+      { new: true }
+    );
+    if (!debited) {
+      throw new Error(`[Withdraw] Insufficient balance (concurrent check)`);
+    }
+    console.warn(`[Withdraw] Paper-balance withdrawal: debited $${fromAmountUsdc} from User.balance (no on-chain funds) for user ${userId}`);
+  }
+
+  if (!sweepEnabled) {
+    console.warn(`[Withdraw] BRIDGE_SWEEP_ENABLED=false — cross-chain bridge of ${fromAmountUsdc} USDC is SIMULATED for user ${userId}`);
   }
 
   const record = await BridgeWithdrawal.create({
@@ -165,10 +196,10 @@ async function refundToProxy(proxyAddress, fromAmountUsdc) {
     return null;
   }
   const { ethers } = require('ethers');
-  const { ADDRESSES, RPC_URL: POLYGON_RPC, getOperatorKey } = require('../config/contracts');
-  const provider = new ethers.JsonRpcProvider(POLYGON_RPC);
+  const { getOperatorKey, getPolygonProvider } = require('../config/contracts');
+  const provider = getPolygonProvider();
   const wallet = new ethers.Wallet(getOperatorKey(), provider);
-  const usdc = new ethers.Contract(ADDRESSES.MOCK_USDC, ['function transfer(address to, uint256 amount) returns (bool)'], wallet);
+  const usdc = new ethers.Contract(POLYGON_USDC, ['function transfer(address to, uint256 amount) returns (bool)'], wallet);
   const amountBase = Math.round(fromAmountUsdc * 1e6);
   const tx = await usdc.transfer(proxyAddress, amountBase);
   const receipt = await tx.wait();
@@ -177,12 +208,20 @@ async function refundToProxy(proxyAddress, fromAmountUsdc) {
 }
 
 async function executeAsync(withdrawalId, { toChainType, provider, fromAmountUsdc, toChainId, toToken, recipientAddr, userId, proxyAddress }) {
+  // The cross-chain bridge only runs for real on MAINNET with sweep enabled.
+  // On testnet, Across/CCTP/Relay have no routes for these chain IDs, so we
+  // SIMULATE the bridge — the Safe debit already happened (proxy → operator), so
+  // simulating here (instead of attempting a real bridge that fails) prevents the
+  // failure → refund cycle that would restore the user's balance.
+  const bridgeLive = IS_MAINNET && process.env.BRIDGE_SWEEP_ENABLED === 'true';
   try {
     await BridgeWithdrawal.findByIdAndUpdate(withdrawalId, { status: 'bridging' });
 
     let result;
     if (toChainType === 'evm') {
-      if (provider === 'debridge') {
+      if (!bridgeLive) {
+        result = { provider: provider || 'across', txHash: null, status: 'simulated' };
+      } else if (provider === 'debridge') {
         const amountBase = Math.round(fromAmountUsdc * 1e6).toString();
         const quote = await debridge.getQuote({
           fromChainId: 137,
@@ -196,13 +235,11 @@ async function executeAsync(withdrawalId, { toChainType, provider, fromAmountUsd
         // Across: operator deposits USDC into the Polygon SpokePool → fills on dest chain
         const amountBase = Math.round(fromAmountUsdc * 1e6).toString();
 
-        if (process.env.BRIDGE_SWEEP_ENABLED !== 'true') {
-          result = { provider: 'across', txHash: null, status: 'simulated' };
-        } else {
+        {
           const { ethers } = require('ethers');
-          const { RPC_URL: POLYGON_RPC, getOperatorKey } = require('../config/contracts');
+          const { getOperatorKey, getPolygonProvider } = require('../config/contracts');
 
-          const rpcProvider = new ethers.JsonRpcProvider(POLYGON_RPC);
+          const rpcProvider = getPolygonProvider();
           const wallet = new ethers.Wallet(getOperatorKey(), rpcProvider);
 
           const POLYGON_USDC = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
@@ -254,11 +291,12 @@ async function executeAsync(withdrawalId, { toChainType, provider, fromAmountUsd
       const { ethers } = require('ethers');
       const { CCTP_CONFIG, MESSAGE_TRANSMITTER_ABI, RPC_URL: POLYGON_RPC, getOperatorKey } = require('../config/contracts');
 
-      if (process.env.BRIDGE_SWEEP_ENABLED !== 'true') {
+      if (!bridgeLive) {
         result = { provider: 'cctp', txHash: null, status: 'simulated' };
       } else {
         // Build depositForBurn on Polygon TokenMessenger for Solana destination
-        const provider = new ethers.JsonRpcProvider(POLYGON_RPC);
+        const { getPolygonProvider } = require('../config/contracts');
+        const provider = getPolygonProvider();
         const wallet = new ethers.Wallet(getOperatorKey(), provider);
         const tokenMessengerAbi = [
           'function depositForBurn(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken) external returns (uint64 nonce)',
@@ -287,7 +325,7 @@ async function executeAsync(withdrawalId, { toChainType, provider, fromAmountUsd
       }
     } else if (toChainType === 'btc') {
       // Relay reverse: Polygon USDC → BTC
-      if (process.env.BRIDGE_SWEEP_ENABLED !== 'true') {
+      if (!bridgeLive) {
         result = { provider: 'relay', txHash: null, status: 'simulated' };
       } else {
         const withdrawal = await relay.createBtcWithdrawal({
@@ -298,8 +336,8 @@ async function executeAsync(withdrawalId, { toChainType, provider, fromAmountUsd
         // The operator needs to send USDC to Relay's Polygon deposit address
         // This is done via a standard ERC20 transfer
         const { ethers } = require('ethers');
-        const { RPC_URL: POLYGON_RPC, getOperatorKey, RELAY_CONFIG: RC } = require('../config/contracts');
-        const provider = new ethers.JsonRpcProvider(POLYGON_RPC);
+        const { getOperatorKey, RELAY_CONFIG: RC, getPolygonProvider } = require('../config/contracts');
+        const provider = getPolygonProvider();
         const wallet = new ethers.Wallet(getOperatorKey(), provider);
         const usdcAbi = ['function transfer(address to, uint256 amount) external returns (bool)'];
         const polygonUsdc = RC?.polygonUsdc || '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
@@ -346,36 +384,49 @@ function validateAmount(amount) {
   if (amount > MAX_WITHDRAW_USD) throw new Error(`[Withdraw] Maximum withdrawal is $${MAX_WITHDRAW_USD}`);
 }
 
-function enforceWithdrawalLimits(user, amount) {
-  const limits = user.withdrawalLimits;
-  if (!limits) return;
-  const now = Date.now();
-  const dayMs  = 86400000;
-  const weekMs = 604800000;
+/**
+ * Enforce daily withdrawal limits using the User.withdrawalLimits schema:
+ *   { dailyTotal, dailyResetAt, lastWithdrawAt }
+ *
+ * Env-configurable limit:
+ *   WITHDRAW_DAILY_LIMIT_USD (default: 10000)
+ */
+async function enforceWithdrawalLimits(user, amount) {
+  const DAILY_LIMIT = parseFloat(process.env.WITHDRAW_DAILY_LIMIT_USD || '10000');
+  const limits = user.withdrawalLimits || {};
+  const now = new Date();
+  const dayMs = 86400000;
 
-  if (limits.dailyLimit && limits.dailyUsed != null) {
-    const dayReset = (limits.lastWithdrawAt?.getTime() || 0) + dayMs;
-    const dailyUsed = now > dayReset ? 0 : (limits.dailyUsed || 0);
-    if (dailyUsed + amount > limits.dailyLimit) {
-      throw new Error(`[Withdraw] Daily limit exceeded (${dailyUsed + amount} > ${limits.dailyLimit})`);
-    }
+  // Reset daily counter if 24h have elapsed since the reset window started
+  let currentDailyTotal = limits.dailyTotal || 0;
+  const resetAt = limits.dailyResetAt ? new Date(limits.dailyResetAt).getTime() : 0;
+  if (now.getTime() - resetAt > dayMs) {
+    currentDailyTotal = 0;
   }
 
-  if (limits.weeklyLimit && limits.weeklyUsed != null) {
-    const weekReset = (limits.weekResetAt?.getTime() || 0) + weekMs;
-    const weeklyUsed = now > weekReset ? 0 : (limits.weeklyUsed || 0);
-    if (weeklyUsed + amount > limits.weeklyLimit) {
-      throw new Error(`[Withdraw] Weekly limit exceeded (${weeklyUsed + amount} > ${limits.weeklyLimit})`);
-    }
+  if (currentDailyTotal + amount > DAILY_LIMIT) {
+    throw new Error(`[Withdraw] Daily limit exceeded ($${(currentDailyTotal + amount).toFixed(2)} > $${DAILY_LIMIT}). Try again after ${new Date(resetAt + dayMs).toISOString()}.`);
   }
+
+  // Update the user's withdrawal tracking
+  const updateFields = {
+    'withdrawalLimits.dailyTotal': currentDailyTotal + amount,
+    'withdrawalLimits.lastWithdrawAt': now,
+  };
+  if (currentDailyTotal === 0) {
+    updateFields['withdrawalLimits.dailyResetAt'] = now;
+  }
+
+  await User.findByIdAndUpdate(user._id, { $set: updateFields });
 }
 
+// USDC addresses on destination chains (Polymarket-supported only)
 const USDC_DEST_BY_CHAIN = {
-  1:     '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-  8453:  '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-  42161: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
-  10:    '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
-  43114: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E',
+  1:     '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',   // Ethereum
+  8453:  '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',   // Base
+  42161: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',   // Arbitrum
+  10:    '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',   // Optimism
+  // Note: Avalanche (43114) removed - not in Polymarket's official supported chains
 };
 
 function resolveDestToken(chainId, token) {
@@ -411,11 +462,11 @@ async function pollPendingWithdrawals() {
 
         // For completed Across withdrawals, verify tx on-chain
         if (w.txHash && w.provider === 'across') {
-          const { ethers } = require('ethers');
+          const { createProvider } = require('../config/contracts');
           const rpcUrl = w.toChainId === 137
-            ? (process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com')
+            ? (process.env.POLYGON_RPC_URL || 'https://polygon-bor-rpc.publicnode.com')
             : (process.env.ETH_RPC_URL || 'https://eth.llamarpc.com');
-          const provider = new ethers.JsonRpcProvider(rpcUrl);
+          const provider = createProvider(rpcUrl, w.toChainId === 137 ? 137 : 1);
           const receipt = await provider.getTransactionReceipt(w.txHash).catch(() => null);
           if (receipt && receipt.status === 1) {
             await BridgeWithdrawal.findByIdAndUpdate(w._id, { status: 'completed' });

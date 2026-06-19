@@ -3,13 +3,14 @@ schema:
   file: ./schema.graphql
 dataSources:
   # MarketFactory - MarketCreated events
+  # Polygon MAINNET deployment 2026-06-17 (chainId 137), block 88660117
   - kind: ethereum
     name: MarketFactory
-    network: polygon-amoy
+    network: matic
     source:
-      address: "0x14f5b9db28c1af09726cf0ca327652303565ae0e"
+      address: "0x0e9Be76713060ae72bF4a431a79DE4e4342703Dd"
       abi: MarketFactory
-      startBlock: 39491000
+      startBlock: 88660117
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.6
@@ -30,11 +31,11 @@ dataSources:
   # CTFExchange - OrdersMatched events
   - kind: ethereum
     name: CTFExchange
-    network: polygon-amoy
+    network: matic
     source:
-      address: "0x8CbA3487e88e19d5aA6A3C78Cc93d06Dc0801eBF"
+      address: "0xB2FB436cC2E6F5c8F2cb9a876FF4AF0CfDF2D8D8"
       abi: CTFExchange
-      startBlock: 39491000
+      startBlock: 88660117
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.6
@@ -53,11 +54,11 @@ dataSources:
   # ConditionalTokens - Position lifecycle events (split, merge, redeem)
   - kind: ethereum
     name: ConditionalTokens
-    network: polygon-amoy
+    network: matic
     source:
-      address: "0x688d809494D56aCD8ea8b252937e9b51F7F8111B"
+      address: "0x4518a86c85F3D0aE6ac100B9384011bba63a9b1c"
       abi: ConditionalTokens
-      startBlock: 39491000
+      startBlock: 88660117
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.6
@@ -86,11 +87,11 @@ dataSources:
   # UmaCtfAdapter - Resolution events
   - kind: ethereum
     name: UmaCtfAdapter
-    network: polygon-amoy
+    network: matic
     source:
-      address: "0xd414d992a493470b0bf833a2f4817b1b88a15b4b"
+      address: "0x78E4B65e23cAD525851F32A1FF19320dE1Df73f7"
       abi: UmaCtfAdapter
-      startBlock: 39491000
+      startBlock: 88660117
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.6

@@ -83,7 +83,7 @@ async function main() {
     try {
       const tx = await factory.createMarket(
         ancillaryData,
-        ADDRESSES.MOCK_USDC,     // rewardToken
+        ADDRESSES.USDC,          // rewardToken
         '0',                     // reward (0 — no UMA reward incentive)
         UMA_BOND,                // proposalBond
         UMA_LIVENESS,            // liveness in seconds

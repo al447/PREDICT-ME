@@ -10,6 +10,8 @@ const router = express.Router();
 // Import payment providers
 const { funWebhookHandler } = require('../services/paymentService');
 const { protect } = require('../middleware/auth');
+const Deposit = require('../models/Deposit');
+const Withdrawal = require('../models/Withdrawal');
 
 /**
  * Fun.xyz webhook endpoint
@@ -70,47 +72,37 @@ router.get('/deposits/:sessionId', protect, async (req, res) => {
 
 /**
  * Create withdrawal request
+ * This is a legacy endpoint. Primary withdrawals go through /api/bridge/withdraw
+ * or /api/onchain/withdraw/exec for on-chain Safe withdrawals.
  */
 router.post('/withdrawals', protect, async (req, res) => {
   try {
     const { amount, destinationAddress, currency } = req.body;
-    const userId = req.user.id;
+    const userId = req.user._id;
     const walletAddress = req.user.walletAddress;
 
-    // Validate withdrawal
     if (!amount || !destinationAddress) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Create withdrawal record
+    if (parseFloat(amount) < 1) {
+      return res.status(400).json({ error: 'Minimum withdrawal is $1' });
+    }
+
     const withdrawal = await Withdrawal.create({
       userId,
       walletAddress,
       destinationAddress,
-      amount,
+      amount: parseFloat(amount),
       currency: currency || 'USDC',
       network: 'polygon',
       status: 'pending'
     });
 
-    // Process withdrawal via payment manager
-    const result = await paymentManager.createWithdrawal({
-      userId,
-      walletAddress,
-      destinationAddress,
-      amount,
-      currency: currency || 'USDC',
-      network: 'polygon'
-    });
-
-    // Update withdrawal with provider response
-    withdrawal.providerSessionId = result.sessionId;
-    await withdrawal.save();
-
     res.json({
       withdrawalId: withdrawal._id,
       status: withdrawal.status,
-      providerSessionId: result.sessionId
+      message: 'Withdrawal request created. Use /api/bridge/withdraw for cross-chain withdrawals.'
     });
   } catch (error) {
     console.error('Create withdrawal error:', error);

@@ -3,7 +3,7 @@ import { Upload, X, ImageIcon, Loader2 } from 'lucide-react';
 import axios from 'axios';
 
 const uploadApi = axios.create({
-  baseURL: (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000') + '/api',
+  baseURL: import.meta.env.VITE_BACKEND_URL ? import.meta.env.VITE_BACKEND_URL + '/api' : '/api',
   timeout: 30000,
 });
 uploadApi.interceptors.request.use((config) => {

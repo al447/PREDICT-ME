@@ -16,13 +16,14 @@ const OUT_DIR = path.join(CONTRACTS_DIR, 'out');
 // We use the interface ABIs where available for cleaner output
 const CONTRACTS = [
   { name: 'MockUSDC', source: 'MockUSDC.sol' },
-  { name: 'ConditionalTokens', source: 'IConditionalTokens.sol', artifactName: 'IConditionalTokens' },  // Interface ABI
+  { name: 'ConditionalTokens', source: 'IConditionalTokensComplete.sol', artifactName: 'IConditionalTokensComplete' },  // Full ERC1155 + CTF ABI (backend needs balanceOf)
   { name: 'CTFExchange', source: 'CTFExchange.sol' },
   { name: 'UmaCtfAdapter', source: 'UmaCtfAdapter.sol' },
   { name: 'NegRiskAdapter', source: 'NegRiskAdapter.sol' },
   { name: 'NegRiskExchange', source: 'NegRiskCtfExchange.sol', artifactName: 'NegRiskCtfExchange' },
   { name: 'WalletFactory', source: 'WalletFactory.sol' },
   { name: 'MarketFactory', source: 'MarketFactory.sol' },
+  { name: 'CryptoMarketResolver', source: 'CryptoMarketResolver.sol' },  // Chainlink Automation resolver
 ];
 
 const DESTINATIONS = [

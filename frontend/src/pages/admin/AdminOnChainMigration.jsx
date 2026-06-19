@@ -28,7 +28,7 @@ import axios from 'axios';
 
 // Create onchain API instance (baseURL is /api/onchain, not /api/admin)
 const onchainApi = axios.create({
-  baseURL: (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000') + '/api/onchain',
+  baseURL: import.meta.env.VITE_BACKEND_URL ? import.meta.env.VITE_BACKEND_URL + '/api/onchain' : '/api/onchain',
   timeout: 30000,
 });
 

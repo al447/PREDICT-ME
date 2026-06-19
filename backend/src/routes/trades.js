@@ -3,7 +3,7 @@ const router = express.Router();
 const { body } = require('express-validator');
 const validate = require('../middleware/validate');
 const { protect } = require('../middleware/auth');
-const { placeTrade, getMyTrades, getPositions, getLeaderboard, getActivity } = require('../controllers/tradeController');
+const { placeTrade, getMyTrades, getPositions, getRedeemablePositions, getLeaderboard, getActivity } = require('../controllers/tradeController');
 
 router.post(
   '/',
@@ -19,6 +19,7 @@ router.post(
 
 router.get('/my', protect, getMyTrades);
 router.get('/positions', protect, getPositions);
+router.get('/positions/redeemable', protect, getRedeemablePositions);
 router.get('/leaderboard', getLeaderboard); // Public endpoint
 router.get('/activity', getActivity); // Public global activity feed
 

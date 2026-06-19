@@ -193,7 +193,7 @@ const DepositModal = () => {
         'function decimals() view returns (uint8)',
       ];
 
-      const MOCK_USDC_ADDRESS = import.meta.env.VITE_MOCK_USDC_ADDRESS || '0xC9EfbCF51e175a8171dDb7f65d709e71be969e56';
+      const MOCK_USDC_ADDRESS = import.meta.env.VITE_USDC_ADDRESS || '0xC9EfbCF51e175a8171dDb7f65d709e71be969e56';
       const usdc = new ethers.Contract(MOCK_USDC_ADDRESS, MockUSDC_ABI, signer);
 
       toast.loading('Minting 10,000 test USDC...', { id: 'faucet' });

@@ -21,19 +21,21 @@ const withdrawLimiter = rateLimit({
   message:  { error: 'Too many withdrawal requests — please wait a minute' },
 });
 
-// ── Supported assets config ───────────────────────────────────────────────────
+// ── Supported assets config (mainnet only) ───────────────────────────────────
 
-const IS_MAINNET = process.env.NETWORK === 'mainnet';
-
+// Polymarket-compatible withdrawal chains
+// Source: https://docs.polymarket.com/trading/bridge/supported-assets
 const SUPPORTED_CHAINS = [
-  { chainId: 1,     chainType: 'evm', name: 'Ethereum',    symbol: 'ETH',  minDepositUsd: 20, tokens: ['USDC', 'ETH'] },
-  { chainId: 8453,  chainType: 'evm', name: 'Base',        symbol: 'ETH',  minDepositUsd: 5,  tokens: ['USDC', 'ETH'] },
-  { chainId: 42161, chainType: 'evm', name: 'Arbitrum',    symbol: 'ETH',  minDepositUsd: 5,  tokens: ['USDC', 'ETH'] },
-  { chainId: 10,    chainType: 'evm', name: 'Optimism',    symbol: 'ETH',  minDepositUsd: 5,  tokens: ['USDC', 'ETH'] },
-  { chainId: 43114, chainType: 'evm', name: 'Avalanche',   symbol: 'AVAX', minDepositUsd: 5,  tokens: ['USDC', 'AVAX'] },
-  { chainId: 137,   chainType: 'evm', name: 'Polygon',     symbol: 'MATIC', minDepositUsd: 1, tokens: ['USDC'] },
-  { chainId: null,  chainType: 'svm', name: 'Solana',      symbol: 'SOL',  minDepositUsd: 5,  tokens: ['USDC', 'SOL'] },
-  { chainId: null,  chainType: 'btc', name: 'Bitcoin',     symbol: 'BTC',  minDepositUsd: 10, tokens: ['BTC'] },
+  // Native settlement chain
+  { chainId: 137,   chainType: 'evm', name: 'Polygon',     symbol: 'POL',  minDepositUsd: 1,  tokens: ['USDC'], isNative: true },
+  // EVM L1/L2 chains (via Across Protocol)
+  { chainId: 1,     chainType: 'evm', name: 'Ethereum',    symbol: 'ETH',  minDepositUsd: 7,  tokens: ['USDC', 'ETH'] },
+  { chainId: 8453,  chainType: 'evm', name: 'Base',        symbol: 'ETH',  minDepositUsd: 2,  tokens: ['USDC', 'ETH'] },
+  { chainId: 42161, chainType: 'evm', name: 'Arbitrum',    symbol: 'ETH',  minDepositUsd: 2,  tokens: ['USDC', 'ETH'] },
+  { chainId: 10,    chainType: 'evm', name: 'Optimism',    symbol: 'ETH',  minDepositUsd: 2,  tokens: ['USDC', 'ETH'] },
+  // Non-EVM chains
+  { chainId: null,  chainType: 'svm', name: 'Solana',      symbol: 'SOL',  minDepositUsd: 2,  tokens: ['USDC', 'SOL'] },
+  { chainId: null,  chainType: 'btc', name: 'Bitcoin',     symbol: 'BTC',  minDepositUsd: 9,  tokens: ['BTC'] },
 ];
 
 /**
@@ -57,6 +59,7 @@ router.get('/supported-assets', (req, res) => {
     settlementChain: 'Polygon',
     settlementChainId: 137,
     withdrawDebitAddress,
+    isTestnet: false,
   });
 });
 

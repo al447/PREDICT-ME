@@ -91,7 +91,7 @@ export function useGaslessApprove() {
       const userAddress = await signer.getAddress();
       
       // Get contract addresses from environment/config
-      const usdcAddress = import.meta.env.VITE_MOCK_USDC_ADDRESS;
+      const usdcAddress = import.meta.env.VITE_USDC_ADDRESS;
       
       // Encode parameters
       const params = encodeParams(
@@ -137,7 +137,7 @@ export function useGaslessSplitPosition() {
       const userAddress = await signer.getAddress();
       
       const ctfAddress = import.meta.env.VITE_CONDITIONAL_TOKENS_ADDRESS;
-      const usdcAddress = import.meta.env.VITE_MOCK_USDC_ADDRESS;
+      const usdcAddress = import.meta.env.VITE_USDC_ADDRESS;
       
       // Encode: splitPosition(address collateral, bytes32 conditionId, uint amount)
       // partition = 0 for col/yes/no split
@@ -179,7 +179,7 @@ export function useGaslessMergePositions() {
       const userAddress = await signer.getAddress();
       
       const ctfAddress = import.meta.env.VITE_CONDITIONAL_TOKENS_ADDRESS;
-      const usdcAddress = import.meta.env.VITE_MOCK_USDC_ADDRESS;
+      const usdcAddress = import.meta.env.VITE_USDC_ADDRESS;
       
       const params = encodeParams(
         ['address', 'bytes32', 'uint256'],
@@ -219,7 +219,7 @@ export function useGaslessRedeemPositions() {
       const userAddress = await signer.getAddress();
       
       const ctfAddress = import.meta.env.VITE_CONDITIONAL_TOKENS_ADDRESS;
-      const usdcAddress = import.meta.env.VITE_MOCK_USDC_ADDRESS;
+      const usdcAddress = import.meta.env.VITE_USDC_ADDRESS;
       
       // Convert amounts to wei
       const amountsWei = amounts.map(a => ethers.parseUnits(a.toString(), 6));

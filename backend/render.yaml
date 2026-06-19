@@ -2,18 +2,17 @@ services:
   - type: web
     name: predictme-api
     runtime: node
+    plan: standard
     rootDir: backend
     buildCommand: npm install --legacy-peer-deps
-    startCommand: node --max-old-space-size=400 src/server.js
+    startCommand: node --max-old-space-size=1700 src/server.js
     envVars:
       - key: NODE_ENV
         value: production
       - key: NODE_OPTIONS
-        value: --max-old-space-size=400
+        value: --max-old-space-size=1700
       - key: PORT
         value: 10000
-      - key: MONGODB_URI
-        sync: false
       - key: JWT_SECRET
         sync: false
       - key: GOOGLE_CLIENT_ID
@@ -24,19 +23,213 @@ services:
         value: https://predictme-live.vercel.app
       - key: FRONTEND_URL
         value: https://predictme-live.vercel.app
+      - key: BACKEND_URL
+        value: https://polybet365-api-live-0s8z.onrender.com
+      - key: GOOGLE_CALLBACK_URL
+        value: https://polybet365-api-live-0s8z.onrender.com/api/auth/google/callback
       - key: ALLOWED_ORIGINS
-        value: https://predictme-live.vercel.app,https://predictme-staging.vercel.app,http://localhost:5173,http://localhost:5174,http://localhost:3000
+        value: https://predictme-live.vercel.app,http://localhost:5173
       - key: MAGIC_SECRET_KEY
         sync: false
       - key: MOONPAY_SECRET_KEY
         sync: false
-      - key: ALCHEMY_API_KEY
+      - key: MONGODB_URI
         sync: false
-      - key: UMA_API_KEY
+      - key: ONCHAIN_ENABLED
+        value: true
+      - key: NONCUSTODIAL_ENABLED
+        value: true
+      - key: MAKER_BOT_ENABLED
+        value: true
+      - key: PLATFORM_WALLET
+        value: 0x786d99F5024acE87250544cE56309AEdB97f44cF
+      - key: POLYGON_RPC_URL
+        value: https://polygon-bor-rpc.publicnode.com
+      - key: USDC_ADDRESS
+        value: 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359
+      - key: CTF_ADDRESS
+        value: 0x4518a86c85F3D0aE6ac100B9384011bba63a9b1c
+      - key: EXCHANGE_ADDRESS
+        value: 0xB2FB436cC2E6F5c8F2cb9a876FF4AF0CfDF2D8D8
+      - key: CTF_EXCHANGE_ADDRESS
+        value: 0xB2FB436cC2E6F5c8F2cb9a876FF4AF0CfDF2D8D8
+      - key: UMA_ADAPTER_ADDRESS
+        value: 0x78E4B65e23cAD525851F32A1FF19320dE1Df73f7
+      - key: NEG_RISK_ADAPTER_ADDRESS
+        value: 0x32d2bE3240A73cDd5A432fE987477A615da29fa9
+      - key: NEG_RISK_EXCHANGE_ADDRESS
+        value: 0x6ceED4031F634bb57fcaE7AD71D58DFDcfCA7eB1
+      - key: WALLET_FACTORY_ADDRESS
+        value: 0x2818282f94e6aBCAC612B5f14b79d061E3B681d8
+      - key: MARKET_FACTORY_ADDRESS
+        value: 0x0e9Be76713060ae72bF4a431a79DE4e4342703Dd
+      - key: WRAPPED_COLLATERAL_ADDRESS
+        value: 0xF5880Ed43a7af85Cf46E7D164b07D3c2C3727931
+      - key: CRYPTO_MARKET_RESOLVER_ADDRESS
+        value: 0x54D68C9D477fb516AD5310F4c42f5D66cDd8c10c
+      - key: INITIAL_BALANCE
+        value: 10000
+      - key: CHAIN_ID
+        value: 137
+      - key: NETWORK
+        value: mainnet
+      - key: UMA_FINDER_ADDRESS
+        value: 0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64
+      - key: UMA_OPTIMISTIC_ORACLE_ADDRESS
+        value: 0xeE3Afe347D5C74317041E2618C49534dAf887c24
+      - key: UMA_REWARD_TOKEN_ADDRESS
+        value: 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359
+      - key: BALANCE_SYNC_MS
+        value: 30000
+      - key: LEGACY_SETTLEMENT
+        value: false
+      - key: LEGACY_WITHDRAW
+        value: false
+      - key: INDEXER_ENABLED
+        value: true
+      - key: DEPOSIT_MIN_CONFIRMATIONS
+        value: 3
+      - key: DEPOSIT_MASTER_MNEMONIC
         sync: false
-      - key: POLYMARKET_API_KEY
+      - key: DEPLOYER_PRIVATE_KEY
         sync: false
-      - key: WEB3_STORAGE_TOKEN
+      - key: RELAYER_PRIVATE_KEY
         sync: false
-      - key: PINATA_JWT
+      - key: OPERATOR_PRIVATE_KEY
+        sync: false
+      - key: ETHERSCAN_API_KEY
+        sync: false
+      - key: POLYGONSCAN_API_KEY
+        sync: false
+      - key: ETH_RPC
+        value: https://eth.drpc.org
+      - key: BSC_RPC
+        value: https://bsc-rpc.publicnode.com
+      - key: BASE_RPC
+        value: https://base-rpc.publicnode.com
+      - key: ARB_RPC
+        value: https://arb1.arbitrum.io/rpc
+      - key: SOLANA_RPC_URL
+        value: https://api.mainnet-beta.solana.com
+      - key: SOLANA_DEPOSIT_ADDRESS
+        value: AbHoEKbAqheaVwFB4apsZKq932ki9roQy4bzqPoH7XmW
+      - key: BTC_API_URL
+        value: https://mempool.space/api
+      - key: EVM_DEPOSIT_ADDRESS
+        value: 0x786d99F5024acE87250544cE56309AEdB97f44cF
+      - key: BRIDGE_PROVIDER
+        value: relay
+      - key: RELAY_API_URL
+        value: https://api.relay.link
+      - key: RELAY_BITCOIN_CHAIN_ID
+        value: 8253038
+      - key: RELAY_POLYGON_USDC
+        value: 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359
+      - key: RELAY_BTC_NATIVE_SENTINEL
+        value: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
+      - key: RELAY_WATCHER_POLL_MS
+        value: 30000
+      - key: CCTP_IRIS_API
+        value: https://iris-api.circle.com
+      - key: CCTP_SOLANA_DOMAIN
+        value: 5
+      - key: CCTP_POLYGON_DOMAIN
+        value: 7
+      - key: CCTP_SOLANA_USDC
+        value: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+      - key: CCTP_SOLANA_TOKEN_MESSENGER
+        value: CCTPiPYPc6AsJuwueEnWgSgucamXDZwBd53dQ11YiKX3o
+      - key: CCTP_SOLANA_MESSAGE_TRANSMITTER
+        value: CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd
+      - key: CCTP_POLYGON_TOKEN_MESSENGER
+        value: 0x9daF8c91AEFAE50b9c0E69629D3F6Ca40cA3B3FE
+      - key: CCTP_POLYGON_MESSAGE_TRANSMITTER
+        value: 0xF3be9355363857F3e001be68856A2f96b4C39Ba9
+      - key: SOLANA_OPERATOR_SECRET
+        sync: false
+      - key: BRIDGE_SOL_GAS_LAMPORTS
+        value: 5000000
+      - key: LIFI_API_URL
+        value: https://li.quest/v1
+      - key: BRIDGE_DEST_CHAIN
+        value: polygon
+      - key: BRIDGE_DEST_CHAIN_ID
+        value: 137
+      - key: ACROSS_API_URL
+        value: https://app.across.to/api
+      - key: BRIDGE_WATCHER_ENABLED
+        value: true
+      - key: BRIDGE_SWEEP_ENABLED
+        value: true
+      - key: BRIDGE_MIN_DEPOSIT_USD
+        value: 1
+      - key: BRIDGE_MIN_WITHDRAW_USD
+        value: 10
+      - key: BRIDGE_MAX_WITHDRAW_USD
+        value: 100000
+      - key: BRIDGE_COMPLETION_POLL_MS
+        value: 60000
+      - key: BRIDGE_WATCHER_POLL_MS
+        value: 30000
+      - key: KEY_PROVIDER
+        value: envvar
+      - key: ENABLE_TESTNET_WATCHER
+        value: false
+      - key: CHAINLINK_ENABLED
+        value: true
+      - key: CHAINLINK_MAX_STALE_SEC
+        value: 3600
+      - key: CHAINLINK_STREAMS_ENABLED
+        value: false
+      - key: CHAINLINK_STREAMS_BASE
+        value: https://api.chain.link/v1
+      - key: CHAINLINK_AUTO_RESOLVE_ENABLED
+        value: true
+      - key: CHAINLINK_AUTO_RESOLVE_INTERVAL_MS
+        value: 900000
+      - key: PRICE_RESOLVER_ENABLED
+        value: true
+      - key: PRICE_RESOLVER_INTERVAL_MS
+        value: 900000
+      - key: BINANCE_ENABLED
+        value: true
+      - key: BINANCE_REST_BASE
+        value: https://data-api.binance.vision/api/v3
+      - key: BINANCE_WS_BASE
+        value: wss://data-stream.binance.vision/ws
+      - key: GAMMA_API_URL
+        value: https://gamma-api.polymarket.com
+      - key: CLOB_API_URL
+        value: https://clob.polymarket.com
+      - key: MARKET_SYNC_ENABLED
+        value: true
+      - key: MARKET_SYNC_INTERVAL_MS
+        value: 3600000
+      - key: MAKER_BOT_SCOPE
+        value: featured
+      - key: MAKER_SPREAD_BPS
+        value: 100
+      - key: MAKER_DEPTH_USDC
+        value: 500
+      - key: MAKER_REFRESH_MS
+        value: 300000
+      - key: MOONPAY_API_KEY
+        sync: false
+      - key: MOONPAY_WEBHOOK_KEY
+        sync: false
+      - key: MOONPAY_CURRENCY_TEST
+        value: usdc
+      - key: MOONPAY_CURRENCY_LIVE
+        value: usdc_polygon
+      - key: MOONPAY_ENV
+        value: live
+      - key: GOLDSKY_API_KEY
+        sync: false
+      - key: GOLDSKY_SUBGRAPH_URL
+        value: https://api.goldsky.com/api/public/project_cmptqahlavl8u01wze260he0f/subgraphs/polybet365-v2/mainnet/gn
+      - key: ADMIN_EMAIL
+        value: admin@polybet365.com
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_JWT_SECRET
         sync: false

@@ -48,15 +48,41 @@ async function getQuote({ fromChainId, srcTokenAddress, dstTokenAddress, srcToke
 
 /**
  * Execute a DeBridge order using a pre-fetched quote.
- * The sweep service signs and broadcasts the calldata returned by getQuote.
+ * Broadcasts the calldata via the operator wallet on Polygon.
  */
 async function execute({ orderCalldata }) {
   if (process.env.BRIDGE_SWEEP_ENABLED !== 'true') {
     console.log('[DeBridge] Sandbox mode — skipping real execution');
     return { status: 'simulated', txHash: null, provider: 'debridge' };
   }
-  if (!orderCalldata) throw new Error('[DeBridge] No order calldata — call getQuote first');
-  return { calldata: orderCalldata, provider: 'debridge' };
+  if (!orderCalldata || !orderCalldata.to || !orderCalldata.data) {
+    throw new Error('[DeBridge] Invalid order calldata — call getQuote first');
+  }
+
+  const { ethers } = require('ethers');
+  const { getOperatorKey, getPolygonProvider } = require('../../config/contracts');
+  const provider = getPolygonProvider();
+  const wallet = new ethers.Wallet(getOperatorKey(), provider);
+
+  // Approve USDC spend to DeBridge contract if needed
+  const srcToken = orderCalldata.allowanceTarget && orderCalldata.allowanceTarget !== ethers.ZeroAddress
+    ? orderCalldata.allowanceTarget
+    : orderCalldata.to;
+  if (orderCalldata.allowanceValue && BigInt(orderCalldata.allowanceValue) > 0n) {
+    const usdcAbi = ['function approve(address spender, uint256 amount) external returns (bool)'];
+    const POLYGON_USDC = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
+    const usdc = new ethers.Contract(POLYGON_USDC, usdcAbi, wallet);
+    await (await usdc.approve(srcToken, orderCalldata.allowanceValue)).wait();
+  }
+
+  const tx = await wallet.sendTransaction({
+    to:    orderCalldata.to,
+    data:  orderCalldata.data,
+    value: orderCalldata.value ? BigInt(orderCalldata.value) : 0n,
+  });
+  const receipt = await tx.wait();
+  console.log(`[DeBridge] Order broadcast, tx: ${receipt.hash}`);
+  return { status: 'bridging', txHash: receipt.hash, provider: 'debridge' };
 }
 
 /**

@@ -10,9 +10,9 @@ const mongoose = require('mongoose');
 
 const userPositionSchema = new mongoose.Schema(
   {
-    user:        { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    user:        { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     walletAddress: { type: String, required: true, lowercase: true, index: true },
-    conditionId: { type: String, required: true, index: true },
+    conditionId: { type: String, required: true },
     tokenId:     { type: String, required: true },
     side:        { type: String, enum: ['YES', 'NO', 'UNKNOWN'], default: 'UNKNOWN' },
     balance:     { type: Number, default: 0 },

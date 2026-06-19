@@ -13,6 +13,8 @@ const candidateSchema = new mongoose.Schema({
   polymarketTokenId: { type: String, default: null }, // CLOB YES token
   conditionId: { type: String, default: null },
   image: { type: String, default: null },
+  resolved: { type: Boolean, default: false },       // true if this candidate's market is resolved/closed
+  resolvedOutcome: { type: String, default: null },  // 'Yes' or 'No' — winning outcome if resolved
 });
 
 const newsLinkSchema = new mongoose.Schema({
@@ -65,9 +67,12 @@ const marketSchema = new mongoose.Schema(
     rules: { type: String, default: '' },
     sourceOfTruth: { type: String, default: '' },
     closeDate: { type: Date },
+    closedAt: { type: Date },          // When market was closed (auto or manual)
+    closedBy: { type: String, default: null }, // 'system' (auto) or userId (manual)
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     resolvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     resolvedAt: { type: Date },
+    winningCandidate: { type: String, default: null },
     chainlinkResolved: { type: Boolean, default: false }, // true if auto-resolved by Chainlink
     chainlinkPrice: { type: Number, default: null },       // Chainlink price at resolution time
     // ── Price Market fields (Chainlink settlement) ───────────────────────────
@@ -102,6 +107,10 @@ marketSchema.index({ status: 1, createdAt: -1 });
 marketSchema.index({ status: 1, categorySlug: 1, volume: -1 });
 marketSchema.index({ featured: 1, status: 1, volume: -1 });
 marketSchema.index({ status: 1, volume24hr: -1 });
+// Index for market status service (auto-close expired markets)
+marketSchema.index({ status: 1, endDate: 1 });
+// Index for pending resolution queries
+marketSchema.index({ status: 1, resolvedAt: 1, onChain: 1 });
 marketSchema.index({ hotTopic: 1, status: 1 });
 marketSchema.index({ conditionId: 1 }, { sparse: true });
 

@@ -9,3 +9,4 @@ build/
 dist.zip
 
 # contracts/ has its own .git repo — exclude entirely from root tracking
+.env*

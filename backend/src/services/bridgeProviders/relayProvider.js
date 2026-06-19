@@ -108,7 +108,7 @@ async function getRequestsByDepositAddress(depositAddress) {
  */
 async function getStatus(requestId) {
   if (!SWEEP_ENABLED) {
-    return { status: 'success', outTxHash: null, outAmountUsdc: null, provider: 'relay' };
+    return { status: 'pending', outTxHash: null, outAmountUsdc: null, provider: 'relay' };
   }
 
   if (!requestId) return { status: 'pending', provider: 'relay' };

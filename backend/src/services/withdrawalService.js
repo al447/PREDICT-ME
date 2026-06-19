@@ -43,7 +43,7 @@ async function prepareWithdrawal(proxyAddress, recipient, amountUsdc) {
   if (!ethers.isAddress(recipient))    throw new Error('Invalid recipient');
   if (amountUsdc <= 0)                 throw new Error('Amount must be positive');
 
-  const usdcAddress = ADDRESSES.MOCK_USDC;
+  const usdcAddress = ADDRESSES.USDC;
   const data = encodeUsdcTransfer(recipient, amountUsdc);
 
   return buildSafeTxForSigning({
@@ -93,7 +93,7 @@ async function executeWithdrawal(safeAddressOrOpts, recipient, amountUsdc, userS
     throw new Error(`Insufficient proxy balance: ${balance.toFixed(6)} USDC available, ${amount} requested`);
   }
 
-  const usdcAddress = ADDRESSES.MOCK_USDC;
+  const usdcAddress = ADDRESSES.USDC;
   const data = encodeUsdcTransfer(toAddress, amount);
 
   // Both POLY_PROXY and Gnosis Safe use execSafeTransaction (same interface).

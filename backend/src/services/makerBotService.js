@@ -1,10 +1,12 @@
 /**
  * makerBotService.js — Operator market-maker bot
  *
- * Posts resting SELL orders for YES + NO tokens at each market's probability.
+ * Two-sided market maker: posts resting BUY + SELL orders for YES + NO tokens.
  * The operator splits USDC → YES+NO via CTF, then places:
- *   - SELL YES @ (p + spread)
- *   - SELL NO  @ ((1-p) + spread)
+ *   - SELL YES @ (p + spread)   — users buy YES from bot
+ *   - SELL NO  @ ((1-p) + spread) — users buy NO from bot
+ *   - BUY  YES @ (p - spread)   — users sell YES to bot
+ *   - BUY  NO  @ ((1-p) - spread) — users sell NO to bot
  *
  * Env vars:
  *   MAKER_SPREAD_BPS   — half-spread in basis points (default 100 = 1%)
@@ -14,7 +16,7 @@
  */
 
 const { ethers } = require('ethers');
-const { ADDRESSES, ABIS, RPC_URL, CHAIN_ID, getOperatorKey, ORDER_DOMAIN, ORDER_TYPES } = require('../config/contracts');
+const { ADDRESSES, ABIS, RPC_URL, CHAIN_ID, getOperatorKey, getPolygonProvider, ORDER_DOMAIN, ORDER_TYPES } = require('../config/contracts');
 const Order = require('../models/Order');
 const Market = require('../models/Market');
 
@@ -28,8 +30,7 @@ let _refreshTimers  = new Map(); // conditionId → timer
 
 function getOperatorWallet() {
   if (!_operatorWallet) {
-    const provider = new ethers.JsonRpcProvider(RPC_URL);
-    _operatorWallet = new ethers.Wallet(getOperatorKey(), provider);
+    _operatorWallet = new ethers.Wallet(getOperatorKey(), getPolygonProvider());
   }
   return _operatorWallet;
 }
@@ -38,25 +39,51 @@ function getOperatorWallet() {
  * Split USDC into YES+NO tokens for the given market.
  * Operator approvals (USDC→CTF) must already be set (setOperatorApprovals.js).
  */
-async function seedMarket(conditionId) {
+async function seedMarket(conditionId, attempt = 1) {
   if (process.env.ONCHAIN_ENABLED !== 'true') throw new Error('ONCHAIN_ENABLED is not true');
 
   const operator = getOperatorWallet();
   const ctf = new ethers.Contract(ADDRESSES.CTF, ABIS.CTF, operator);
 
+  // Guard: condition must be prepared on the CTF contract, otherwise splitPosition
+  // reverts ("condition not prepared yet"), wasting gas and burning nonces.
+  const slotCount = await ctf.getOutcomeSlotCount(conditionId).catch(() => 0n);
+  if (slotCount === 0n) {
+    const e = new Error('condition not prepared');
+    e.code = 'CONDITION_NOT_PREPARED';
+    throw e;
+  }
+
   const amount = ethers.parseUnits(DEPTH_USDC.toFixed(6), 6);
 
-  const tx = await ctf.splitPosition(
-    ADDRESSES.MOCK_USDC,
-    ethers.ZeroHash,      // parentCollectionId = 0 (top-level)
-    conditionId,
-    [1, 2],               // partition: YES=1, NO=2
-    amount,
-    { gasLimit: 300_000 }
-  );
-  const receipt = await tx.wait();
-  console.log(`[MakerBot] seedMarket conditionId=${conditionId} amount=${DEPTH_USDC} USDC tx=${receipt.hash}`);
-  return { txHash: receipt.hash, conditionId, depthUsdc: DEPTH_USDC };
+  // Get current gas price and add buffer for Polygon Amoy
+  const feeData = await operator.provider.getFeeData();
+  const gasPrice = feeData.gasPrice ? (feeData.gasPrice * 120n) / 100n : ethers.parseUnits('50', 'gwei'); // Add 20% buffer
+
+  try {
+    const tx = await ctf.splitPosition(
+      ADDRESSES.USDC,
+      ethers.ZeroHash,      // parentCollectionId = 0 (top-level)
+      conditionId,
+      [1, 2],               // partition: YES=1, NO=2
+      amount,
+      { 
+        gasLimit: 300_000,
+        gasPrice: gasPrice
+      }
+    );
+    const receipt = await tx.wait();
+    console.log(`[MakerBot] seedMarket conditionId=${conditionId} amount=${DEPTH_USDC} USDC tx=${receipt.hash}`);
+    return { txHash: receipt.hash, conditionId, depthUsdc: DEPTH_USDC };
+  } catch (err) {
+    // Handle replacement transaction underpriced - retry with higher gas
+    if (err.code === 'REPLACEMENT_UNDERPRICED' && attempt < 3) {
+      console.log(`[MakerBot] Retrying ${conditionId} with higher gas (attempt ${attempt + 1})...`);
+      await new Promise(r => setTimeout(r, 2000)); // Wait 2s before retry
+      return seedMarket(conditionId, attempt + 1);
+    }
+    throw err;
+  }
 }
 
 /**
@@ -116,7 +143,7 @@ async function placeOperatorOrder({ conditionId, tokenId, side, price, sizeShare
   });
 
   await order.save();
-  console.log(`[MakerBot] Placed operator SELL order tokenId=${tokenId} price=${price.toFixed(4)} size=${sizeShares}`);
+  console.log(`[MakerBot] Placed operator ${side === 1 ? 'SELL' : 'BUY'} order tokenId=${tokenId} price=${price.toFixed(4)} size=${sizeShares.toFixed(2)}`);
   return order;
 }
 
@@ -135,28 +162,62 @@ async function cancelOperatorOrders(conditionId) {
 
 /**
  * Re-quote: cancel existing operator orders, then post fresh ones at current probability.
+ * Uses adaptive depth: wider spread and more depth for markets with low liquidity.
  */
 async function refreshMarket(conditionId) {
   if (process.env.ONCHAIN_ENABLED !== 'true') return;
 
-  const market = await Market.findOne({ conditionId });
+  let market;
+  try {
+    market = await Market.findOne({ conditionId });
+  } catch (err) {
+    console.error(`[MakerBot] DB error fetching market ${conditionId}: ${err.message}`);
+    return;
+  }
+
   if (!market) {
     console.warn(`[MakerBot] refreshMarket: market not found conditionId=${conditionId}`);
     return;
   }
 
-  const yesOutcome = market.outcomes?.find(o => o.name.toLowerCase() === 'yes');
-  const noOutcome  = market.outcomes?.find(o => o.name.toLowerCase() === 'no');
+  // Stop quoting if market is no longer active or past end date
+  if (market.status !== 'active') {
+    console.log(`[MakerBot] Market ${conditionId} is ${market.status}, stopping & cancelling orders`);
+    stopMarket(conditionId);
+    await cancelOperatorOrders(conditionId);
+    return;
+  }
+
+  if (market.endDate && new Date(market.endDate) < new Date()) {
+    console.log(`[MakerBot] Market ${conditionId} past endDate, stopping`);
+    stopMarket(conditionId);
+    await cancelOperatorOrders(conditionId);
+    return;
+  }
+
+  let yesOutcome = market.outcomes?.find(o => o.name.toLowerCase() === 'yes');
+  let noOutcome  = market.outcomes?.find(o => o.name.toLowerCase() === 'no');
+  if ((!yesOutcome || !noOutcome) && market.outcomes?.length === 2) {
+    yesOutcome = market.outcomes[0];
+    noOutcome  = market.outcomes[1];
+  }
   if (!yesOutcome || !noOutcome) {
     console.warn(`[MakerBot] refreshMarket: missing YES/NO outcomes for ${conditionId}`);
     return;
   }
 
-  const p    = (yesOutcome.price || 50) / 100; // probability 0..1
+  const p    = (yesOutcome.price || 50) / 100;
   const spread = SPREAD_BPS / 10000;
 
-  const yesPrice = Math.min(0.99, p + spread);
-  const noPrice  = Math.min(0.99, (1 - p) + spread);
+  // Widen spread for extreme probabilities to avoid providing
+  // one-sided liquidity at near-certain outcomes
+  const extremeFactor = Math.max(1, 1 + 2 * Math.abs(p - 0.5));
+  const effectiveSpread = Math.min(spread * extremeFactor, 0.15);
+
+  const yesAsk = Math.max(0.02, Math.min(0.98, p + effectiveSpread));
+  const noAsk  = Math.max(0.02, Math.min(0.98, (1 - p) + effectiveSpread));
+  const yesBid = Math.max(0.02, Math.min(0.98, p - effectiveSpread));
+  const noBid  = Math.max(0.02, Math.min(0.98, (1 - p) - effectiveSpread));
 
   const yesTokenId = market.yesTokenId;
   const noTokenId  = market.noTokenId;
@@ -169,16 +230,25 @@ async function refreshMarket(conditionId) {
   // Cancel stale orders first
   await cancelOperatorOrders(conditionId);
 
-  // Size: DEPTH_USDC / price = number of shares to sell
-  const yesShares = DEPTH_USDC / yesPrice;
-  const noShares  = DEPTH_USDC / noPrice;
+  // Size: DEPTH_USDC / price = number of shares
+  const yesAskShares = DEPTH_USDC / yesAsk;
+  const noAskShares  = DEPTH_USDC / noAsk;
+  const yesBidShares = DEPTH_USDC / yesBid;
+  const noBidShares  = DEPTH_USDC / noBid;
 
-  await Promise.all([
-    placeOperatorOrder({ conditionId, tokenId: yesTokenId, side: 1, price: yesPrice, sizeShares: yesShares }),
-    placeOperatorOrder({ conditionId, tokenId: noTokenId,  side: 1, price: noPrice,  sizeShares: noShares }),
-  ]);
+  try {
+    await Promise.all([
+      placeOperatorOrder({ conditionId, tokenId: yesTokenId, side: 1, price: yesAsk, sizeShares: yesAskShares }),
+      placeOperatorOrder({ conditionId, tokenId: noTokenId,  side: 1, price: noAsk,  sizeShares: noAskShares }),
+      placeOperatorOrder({ conditionId, tokenId: yesTokenId, side: 0, price: yesBid, sizeShares: yesBidShares }),
+      placeOperatorOrder({ conditionId, tokenId: noTokenId,  side: 0, price: noBid,  sizeShares: noBidShares }),
+    ]);
+  } catch (err) {
+    console.error(`[MakerBot] Failed to place orders for ${conditionId}: ${err.message}`);
+    return;
+  }
 
-  console.log(`[MakerBot] refreshMarket conditionId=${conditionId} YES@${yesPrice.toFixed(4)} NO@${noPrice.toFixed(4)}`);
+  console.log(`[MakerBot] refreshMarket ${conditionId} YES ask=${yesAsk.toFixed(4)} bid=${yesBid.toFixed(4)} NO ask=${noAsk.toFixed(4)} bid=${noBid.toFixed(4)} spread=${(effectiveSpread*100).toFixed(1)}%`);
 }
 
 /**
@@ -259,34 +329,43 @@ async function seedAndStartAll() {
   // Process in batches to avoid RPC rate limits
   const BATCH_SIZE = 5;
   const DELAY_MS = 2000;
+  let skipped = 0;
 
   for (let i = 0; i < markets.length; i += BATCH_SIZE) {
     const batch = markets.slice(i, i + BATCH_SIZE);
 
-    await Promise.all(
-      batch.map(async (market) => {
-        try {
-          // Check if operator already holds inventory for this market
-          const ctf = new ethers.Contract(ADDRESSES.CTF, ABIS.CTF, operator);
-          const yesBalance = await ctf.balanceOf(operatorAddress, market.token0);
-          const noBalance = await ctf.balanceOf(operatorAddress, market.token1);
+    // Process sequentially to avoid nonce collisions
+    for (const market of batch) {
+      try {
+        // Check if operator already holds inventory for this market
+        const ctf = new ethers.Contract(ADDRESSES.CTF, ABIS.CTF, operator);
+        const yesBalance = await ctf.balanceOf(operatorAddress, market.token0);
+        const noBalance = await ctf.balanceOf(operatorAddress, market.token1);
 
-          const hasInventory = yesBalance > 0n || noBalance > 0n;
+        const hasInventory = yesBalance > 0n || noBalance > 0n;
 
-          if (!hasInventory) {
-            console.log(`[MakerBot] Seeding ${market.conditionId} (${market.title?.slice(0, 40)}...)`);
-            await seedMarket(market.conditionId);
-          } else {
-            console.log(`[MakerBot] Already seeded ${market.conditionId}, skipping`);
-          }
-
-          // Start the market (place initial orders)
-          await startMarket(market.conditionId);
-        } catch (err) {
-          console.error(`[MakerBot] Failed to seed/start ${market.conditionId}: ${err.message}`);
+        if (!hasInventory) {
+          console.log(`[MakerBot] Seeding ${market.conditionId} (${market.title?.slice(0, 40)}...)`);
+          await seedMarket(market.conditionId);
+          // Add delay after each seed to prevent RPC rate limiting
+          await new Promise(r => setTimeout(r, 1000));
+        } else {
+          console.log(`[MakerBot] Already seeded ${market.conditionId}, skipping`);
         }
-      })
-    );
+
+        // Start the market (place initial orders)
+        await startMarket(market.conditionId);
+      } catch (err) {
+        if (err.code === 'CONDITION_NOT_PREPARED') {
+          // Expected for markets synced off-chain but not deployed on-chain — skip quietly.
+          skipped++;
+          continue;
+        }
+        console.error(`[MakerBot] Failed to seed/start ${market.conditionId}: ${err.message}`);
+        // Continue with next market even if this one fails
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
 
     if (i + BATCH_SIZE < markets.length) {
       console.log(`[MakerBot] Batch complete, waiting ${DELAY_MS}ms...`);
@@ -294,7 +373,7 @@ async function seedAndStartAll() {
     }
   }
 
-  console.log(`[MakerBot] Auto-start complete. Active markets: ${_refreshTimers.size}`);
+  console.log(`[MakerBot] Auto-start complete. Active markets: ${_refreshTimers.size}, skipped (condition not prepared): ${skipped}`);
 }
 
 module.exports = {

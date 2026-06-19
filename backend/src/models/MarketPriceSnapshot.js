@@ -17,4 +17,7 @@ const marketPriceSnapshotSchema = new mongoose.Schema(
 marketPriceSnapshotSchema.index({ market: 1, createdAt: -1 });
 marketPriceSnapshotSchema.index({ market: 1, outcome: 1, createdAt: -1 });
 
+// TTL index: auto-delete snapshots after 7 days to prevent Atlas storage exhaustion
+marketPriceSnapshotSchema.index({ createdAt: 1 }, { expireAfterSeconds: 604800 });
+
 module.exports = mongoose.model('MarketPriceSnapshot', marketPriceSnapshotSchema);

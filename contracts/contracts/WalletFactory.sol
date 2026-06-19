@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
  * @title  IGnosisSafeProxyFactory — minimal interface
@@ -45,7 +46,7 @@ interface IGnosisSafe {
  *         On Polygon Amoy the Gnosis Safe singleton and proxy factory already
  *         have canonical deployments at well-known addresses.
  */
-contract WalletFactory is Ownable {
+contract WalletFactory is Ownable, ReentrancyGuard {
 
     // ─── State ────────────────────────────────────────────────────────────────
     IGnosisSafeProxyFactory public immutable proxyFactory;
@@ -77,7 +78,8 @@ contract WalletFactory is Ownable {
      * @param  owner  The EOA / Magic address that will own the Safe.
      * @return proxy  The deployed Safe proxy address.
      */
-    function getOrCreateProxy(address owner) external returns (address proxy) {
+    function getOrCreateProxy(address owner) external nonReentrant returns (address proxy) {
+        require(owner != address(0), "owner=0");
         proxy = _proxies[owner];
         if (proxy != address(0)) return proxy;
 
@@ -102,6 +104,7 @@ contract WalletFactory is Ownable {
         uint256 saltNonce = uint256(keccak256(abi.encodePacked(owner)));
 
         proxy = proxyFactory.createProxyWithNonce(safeSingleton, initializer, saltNonce);
+        require(proxy != address(0), "proxy deploy failed");
         _proxies[owner] = proxy;
 
         emit ProxyCreated(owner, proxy);
@@ -150,6 +153,8 @@ contract WalletFactory is Ownable {
      * @notice Admin can pre-register a proxy that was deployed externally.
      */
     function registerProxy(address owner, address proxy) external onlyOwner {
+        require(owner != address(0), "owner=0");
+        require(proxy != address(0), "proxy=0");
         require(_proxies[owner] == address(0), "already registered");
         _proxies[owner] = proxy;
         emit ProxyCreated(owner, proxy);

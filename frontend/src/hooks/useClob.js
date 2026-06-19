@@ -54,11 +54,20 @@ export function useClobWebSocket(conditionId, tokenId, onMessage) {
   useEffect(() => {
     if (!conditionId || !tokenId) return;
     
-    // Connect to WebSocket
-    const wsUrl = `${import.meta.env.VITE_BACKEND_URL || 'ws://localhost:5000'}`.replace('http', 'ws');
-    const socket = new WebSocket(wsUrl);
+    // Build WebSocket URL: production uses VITE_BACKEND_URL, local dev goes through Vite proxy
+    const wsBase = import.meta.env.VITE_BACKEND_URL
+      ? import.meta.env.VITE_BACKEND_URL.replace(/^http/, 'ws')
+      : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
+    const socket = new WebSocket(`${wsBase}/ws`);
+    let disposed = false;
     
     socket.onopen = () => {
+      // If the effect was torn down before the socket finished connecting
+      // (React StrictMode double-mount), close it cleanly now that it's open.
+      if (disposed) {
+        socket.close();
+        return;
+      }
       console.log('[CLOB WS] Connected');
       setConnected(true);
       
@@ -75,18 +84,24 @@ export function useClobWebSocket(conditionId, tokenId, onMessage) {
     };
     
     socket.onclose = () => {
+      if (disposed) return;
       console.log('[CLOB WS] Disconnected');
       setConnected(false);
     };
     
     socket.onerror = (err) => {
+      if (disposed) return;
       console.error('[CLOB WS] Error:', err);
     };
     
     setWs(socket);
     
     return () => {
-      socket.close();
+      disposed = true;
+      // Only close if already open; closing a CONNECTING socket triggers a
+      // noisy "closed before established" warning. The onopen handler above
+      // closes it once the handshake completes.
+      if (socket.readyState === WebSocket.OPEN) socket.close();
     };
   }, [conditionId, tokenId]);
   

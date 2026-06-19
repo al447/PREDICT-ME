@@ -157,6 +157,23 @@ const ProfilePage = () => {
           </div>
         ) : null}
 
+        {/* Referral Quick Link */}
+        <Link
+          to="/referral"
+          className="flex items-center justify-between bg-gradient-to-r from-[var(--color-gold)]/10 to-transparent border border-[var(--color-gold)]/20 rounded-xl p-4 mb-6 hover:border-[var(--color-gold)]/40 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-[var(--color-gold)]/20 flex items-center justify-center">
+              <TrendingUp className="w-4 h-4 text-[var(--color-gold)]" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-[var(--color-text)]">Referral Program</p>
+              <p className="text-xs text-[var(--color-text-muted)]">Invite friends & earn 5% of their fees</p>
+            </div>
+          </div>
+          <span className="text-xs text-[var(--color-gold)] font-medium">View →</span>
+        </Link>
+
         <Tabs
           tabs={tabs}
           activeTab={activeTab}

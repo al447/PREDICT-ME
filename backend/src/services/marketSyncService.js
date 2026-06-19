@@ -122,13 +122,20 @@ const TAG_TO_SUBCATEGORY = {
   'london': 'London', 'new-york-city': 'New York', 'tokyo': 'Tokyo',
 };
 
-// Polymarket tag slug → frequency value for crypto markets
+// Polymarket tag slug → frequency value for crypto markets.
+// Polymarket's live recurring "Up or Down" markets use SHORT tags like
+// `5M`, `15M`, `1H`, `4h` (note: inconsistent casing). The longer
+// `*-crypto` variants are kept for forward-compat. Keys are matched
+// case-insensitively via resolveFrequency().
 const TAG_TO_FREQUENCY = {
+  // Real Polymarket interval tags (primary)
+  '5m': '5min', '15m': '15min', '1h': '1hour', '4h': '4hour',
+  // Legacy / alternate slugs
   '5-minute-crypto': '5min', '5min-crypto': '5min',
   '15-minute-crypto': '15min', '15min-crypto': '15min',
   '1-hour-crypto': '1hour', 'hourly-crypto': '1hour',
   '4-hour-crypto': '4hour',
-  'daily-crypto': 'daily', 'crypto-daily': 'daily',
+  'daily-crypto': 'daily', 'crypto-daily': 'daily', 'daily-close': 'daily', 'today': 'daily',
   'weekly-crypto': 'weekly', 'crypto-weekly': 'weekly',
   'monthly-crypto': 'monthly', 'crypto-monthly': 'monthly',
   'yearly-crypto': 'yearly', 'crypto-yearly': 'yearly',
@@ -152,7 +159,8 @@ function resolveSubCategory(tagSlugs) {
 
 function resolveFrequency(tagSlugs) {
   for (const slug of tagSlugs) {
-    if (TAG_TO_FREQUENCY[slug]) return TAG_TO_FREQUENCY[slug];
+    const f = TAG_TO_FREQUENCY[slug] || TAG_TO_FREQUENCY[String(slug).toLowerCase()];
+    if (f) return f;
   }
   return null;
 }
@@ -166,11 +174,22 @@ function parseJsonField(val) {
 // A grouped (negRisk) event has multiple sub-markets each representing one candidate.
 // Detect when the event has 3+ active markets with distinct groupItemTitles.
 function isGroupedEvent(event) {
-  if (!event.negRisk) return false;
-  const markets = (event.markets || []).filter(m => m.active && !m.closed);
-  if (markets.length < 3) return false;
-  const titles = markets.map(m => m.groupItemTitle || '').filter(Boolean);
-  return new Set(titles).size >= 3;
+  // Count ALL sub-markets with groupItemTitle (including resolved/closed ones)
+  const allMarkets = (event.markets || []);
+  const activeMarkets = allMarkets.filter(m => m.active && !m.closed);
+  // Classic negRisk grouped events (3+ distinct candidates)
+  if (event.negRisk) {
+    const titles = allMarkets.map(m => m.groupItemTitle || '').filter(Boolean);
+    if (new Set(titles).size >= 3) return true;
+    if (activeMarkets.length < 3) return false;
+    const activeTitles = activeMarkets.map(m => m.groupItemTitle || '').filter(Boolean);
+    return new Set(activeTitles).size >= 3;
+  }
+  // Multi-deadline events (non-negRisk but multiple sub-markets with groupItemTitle)
+  // e.g. "When will Bitcoin hit $150k?" with by June 30 / by Dec 31 deadlines
+  const titles = allMarkets.map(m => m.groupItemTitle || '').filter(Boolean);
+  if (new Set(titles).size >= 2) return true;
+  return false;
 }
 
 function buildMarketDoc(event, market, categoryId, categorySlug, subCategory, frequency) {
@@ -186,7 +205,7 @@ function buildMarketDoc(event, market, categoryId, categorySlug, subCategory, fr
 
   return {
     title: event.title?.trim() || market.question?.trim(),
-    description: event.description || market.description || '',
+    description: bestDescription(event, market),
     category: categoryId,
     categorySlug,
     subCategory,
@@ -207,30 +226,50 @@ function buildMarketDoc(event, market, categoryId, categorySlug, subCategory, fr
     polymarketTokenId: parseJsonField(market.clobTokenIds)[0] || null,
     negRisk: event.negRisk === true,
     polymarketEventSlug: event.slug || null,
-    faq: event.description || '',
+    faq: bestDescription(event, market),
     rewards: 0,
   };
+}
+
+// Pick the best description: prefer market.description (resolution rules) over
+// event.description which is often just the title repeated.
+function bestDescription(event, market) {
+  const evDesc = (event.description || '').trim();
+  const mktDesc = (market?.description || '').trim();
+  // If event description is just the title or very short, prefer market description
+  if (mktDesc && (!evDesc || evDesc.length < 50 || evDesc === event.title?.trim())) {
+    return mktDesc;
+  }
+  return evDesc || mktDesc || '';
 }
 
 function buildGroupedMarketDoc(event, categoryId, categorySlug, subCategory, frequency) {
   const tagSlugs = (event.tags || []).map(t => t.slug || '').filter(Boolean);
 
-  // Build candidates list from all active sub-markets, sorted by price descending
-  const subMarkets = (event.markets || []).filter(m => m.active && !m.closed);
-  const candidates = subMarkets
+  // Build candidates list from ALL sub-markets (active + resolved), sorted by active first then by price descending
+  const allSubMarkets = (event.markets || []).filter(m => m.groupItemTitle);
+  const subMarkets = allSubMarkets.filter(m => m.active && !m.closed);
+  const candidates = allSubMarkets
     .map(m => {
       const prices = parseJsonField(m.outcomePrices);
-      const yesPct = Math.round(parseFloat(prices[0] || '0.5') * 100);
+      const yesPct = Math.round(parseFloat(prices[0] || '0') * 100);
       const tokenIds = parseJsonField(m.clobTokenIds);
+      const isClosed = m.closed || !m.active;
       return {
         name: m.groupItemTitle || m.question?.trim() || 'Unknown',
-        probability: yesPct,
+        probability: isClosed ? 0 : yesPct,
         polymarketTokenId: tokenIds[0] || null,
         conditionId: m.conditionId || null,
         image: m.image || null,
+        resolved: isClosed,
+        resolvedOutcome: isClosed ? 'No' : null,
       };
     })
-    .sort((a, b) => b.probability - a.probability);
+    .sort((a, b) => {
+      // Active candidates first, then resolved
+      if (a.resolved !== b.resolved) return a.resolved ? 1 : -1;
+      return b.probability - a.probability;
+    });
 
   // Use the top-probability candidate's conditionId as the event's primary conditionId
   const primaryMarket = subMarkets.find(m => m.conditionId === candidates[0]?.conditionId)
@@ -244,9 +283,13 @@ function buildGroupedMarketDoc(event, categoryId, categorySlug, subCategory, fre
     { name: 'No', probability: 100 - leadProb, price: 100 - leadProb },
   ];
 
+  // Find best description from sub-markets (resolution rules)
+  const activeMarket = subMarkets[0];
+  const desc = bestDescription(event, activeMarket);
+
   return {
     title: event.title?.trim(),
-    description: event.description || '',
+    description: desc,
     category: categoryId,
     categorySlug,
     subCategory,
@@ -266,9 +309,9 @@ function buildGroupedMarketDoc(event, categoryId, categorySlug, subCategory, fre
     isNewMarket: event.new === true,
     conditionId: primaryMarket?.conditionId || null,
     polymarketTokenId: primaryTokenIds[0] || null,
-    negRisk: true,
+    negRisk: event.negRisk === true,
     polymarketEventSlug: event.slug || null,
-    faq: event.description || '',
+    faq: desc,
     rewards: 0,
   };
 }
@@ -290,6 +333,100 @@ async function fetchEventsByTag(tagSlug, categorySlug) {
     console.warn(`[MarketSync] Failed to fetch tag="${tagSlug}": ${err.message}`);
     return [];
   }
+}
+
+// ── Live recurring crypto markets ("Up or Down") ────────────────────────────
+// Polymarket spawns a fresh window every interval (e.g. a new 5-min market
+// every 5 minutes). We only ever surface the single currently-open window per
+// (coin, interval) so the UI shows live, tradeable markets rather than a flood
+// of expired ones.
+const CRYPTO_FREQUENCY_TAGS = ['5M', '15M', '1H', '4h'];
+const RECURRING_COINS = ['bitcoin', 'ethereum', 'solana', 'xrp', 'dogecoin', 'bnb'];
+const RECURRING_FREQUENCIES = ['5min', '15min', '1hour', '4hour'];
+const COIN_TAG_TO_SYMBOL = {
+  bitcoin: 'BTC', ethereum: 'ETH', solana: 'SOL', xrp: 'XRP', dogecoin: 'DOGE', bnb: 'BNB',
+};
+const COIN_TAG_TO_SUBCAT = {
+  bitcoin: 'Bitcoin', ethereum: 'Ethereum', solana: 'Solana', xrp: 'XRP', dogecoin: 'Dogecoin', bnb: 'BNB',
+};
+
+// From a pool of events, pick the soonest-ending FUTURE window per (coin, freq).
+function selectCurrentWindows(events) {
+  const now = Date.now();
+  const best = new Map(); // `${coin}|${freq}` → { event, end }
+  for (const event of events) {
+    if (event.closed || event.active === false) continue;
+    const tagSlugs = (event.tags || []).map(t => (t.slug || '').toLowerCase());
+    const freq = resolveFrequency(tagSlugs);
+    if (!freq || !RECURRING_FREQUENCIES.includes(freq)) continue;
+    const coin = RECURRING_COINS.find(c => tagSlugs.includes(c));
+    if (!coin) continue;
+    const end = event.endDate ? new Date(event.endDate).getTime() : 0;
+    if (!end || end <= now) continue; // skip expired/closed windows
+    const key = `${coin}|${freq}`;
+    const cur = best.get(key);
+    if (!cur || end < cur.end) best.set(key, { event, end });
+  }
+  return [...best.values()].map(v => v.event);
+}
+
+// Mark recurring crypto windows whose endDate has passed as resolved so the
+// UI only ever shows live windows. Only touches trade-free synced markets.
+async function closeExpiredRecurring() {
+  const res = await Market.updateMany(
+    {
+      frequency: { $in: RECURRING_FREQUENCIES },
+      status: 'active',
+      endDate: { $lt: new Date() },
+      tradeCount: { $in: [0, null] },
+    },
+    { $set: { status: 'resolved' } }
+  );
+  return res.modifiedCount || 0;
+}
+
+async function syncRecurringCrypto(categoryMap) {
+  let map = categoryMap;
+  if (!map) {
+    map = {};
+    for (const c of await Category.find({})) map[c.slug] = c;
+  }
+
+  const results = await Promise.all(CRYPTO_FREQUENCY_TAGS.map(tag => fetchEventsByTag(tag)));
+  const seen = new Set();
+  const all = [];
+  for (const events of results) {
+    for (const e of events) {
+      if (!seen.has(e.id)) { seen.add(e.id); all.push(e); }
+    }
+  }
+
+  const selected = selectCurrentWindows(all);
+  const { created, updated, skipped } = await syncEvents(selected, map);
+
+  // syncEvents resolves subCategory from the generic `crypto-prices` tag (which
+  // maps to "Bitcoin"), so ETH/SOL/etc. windows are mislabelled and lack a
+  // priceSymbol. Correct both per-coin so the homepage FiveMinCryptoSection
+  // (which keys markets by priceSymbol) renders every coin.
+  const ops = [];
+  for (const event of selected) {
+    const tagSlugs = (event.tags || []).map(t => (t.slug || '').toLowerCase());
+    const coin = RECURRING_COINS.find(c => tagSlugs.includes(c));
+    if (!coin) continue;
+    const slug = `pm-${event.slug}`.slice(0, 100);
+    ops.push({
+      updateOne: {
+        filter: { slug },
+        update: { $set: { priceSymbol: COIN_TAG_TO_SYMBOL[coin], subCategory: COIN_TAG_TO_SUBCAT[coin] } },
+      },
+    });
+  }
+  if (ops.length) await Market.bulkWrite(ops);
+
+  const expired = await closeExpiredRecurring();
+
+  console.log(`[MarketSync] Recurring crypto: +${created} new  ~${updated} updated  ${skipped} skipped  ${expired} expired  (${selected.length} live windows from ${all.length} fetched)`);
+  return { created, updated, skipped, expired };
 }
 
 async function syncEvents(events, categoryMap) {
@@ -335,6 +472,14 @@ async function syncEvents(events, categoryMap) {
       let existing;
       if (doc.marketType === 'grouped') {
         existing = await Market.findOne({ polymarketEventSlug: event.slug });
+        // Fall back to title+category to find & upgrade binary → grouped
+        if (!existing && doc.title) {
+          existing = await Market.findOne({ title: doc.title, categorySlug: doc.categorySlug });
+        }
+        // Also try slug match for old binary markets that used a sub-market slug
+        if (!existing) {
+          existing = await Market.findOne({ slug: doc.slug });
+        }
       } else {
         existing = await Market.findOne({ conditionId: lookupConditionId });
         if (!existing && doc.title) {
@@ -355,6 +500,8 @@ async function syncEvents(events, categoryMap) {
           image: doc.image,
           subCategory: doc.subCategory,
           frequency: doc.frequency,
+          description: doc.description,
+          faq: doc.faq,
         };
 
         if (PRICE_RESYNC_ENABLED || existing.tradeCount === 0) {
@@ -365,6 +512,7 @@ async function syncEvents(events, categoryMap) {
         if (doc.marketType === 'grouped') {
           updateFields.candidates = doc.candidates;
           updateFields.marketType = 'grouped';
+          updateFields.polymarketEventSlug = doc.polymarketEventSlug;
         }
 
         // Apply price-market classification if not already set
@@ -419,7 +567,13 @@ async function trimToCategoryLimit() {
   let totalDeleted = 0;
 
   for (const slug of categorySlugs) {
-    const markets = await Market.find({ categorySlug: slug, status: 'active' })
+    // Recurring crypto windows (frequency set) are managed by syncRecurringCrypto
+    // and excluded from the volume-based trim so live windows are never evicted.
+    const markets = await Market.find({
+      categorySlug: slug,
+      status: 'active',
+      $or: [{ frequency: null }, { frequency: { $exists: false } }],
+    })
       .sort({ volume24hr: -1 })
       .select('_id tradeCount volume24hr')
       .lean();
@@ -480,6 +634,10 @@ async function runSync() {
 
   const { created, updated, skipped } = await syncEvents(allEvents, categoryMap);
 
+  // Pull live recurring crypto windows (5m/15m/1h/4h Up-or-Down markets)
+  await syncRecurringCrypto(categoryMap).catch(err =>
+    console.warn('[MarketSync] Recurring crypto sync error:', err.message));
+
   // Enforce 50-per-category cap
   const trimmed = await trimToCategoryLimit();
 
@@ -490,6 +648,12 @@ async function runSync() {
 }
 
 let _syncTimer = null;
+let _recurringTimer = null;
+
+// Recurring crypto windows expire every few minutes, so refresh them far more
+// often than the full sync. Defaults to 2 min; override via env.
+const RECURRING_SYNC_INTERVAL_MS = parseInt(
+  process.env.RECURRING_SYNC_INTERVAL_MS || '120000', 10);
 
 function start() {
   if (process.env.MARKET_SYNC_ENABLED !== 'true') {
@@ -500,16 +664,23 @@ function start() {
   // Run immediately on startup
   runSync().catch(err => console.error('[MarketSync] Initial sync error:', err.message));
 
-  // Schedule recurring sync
+  // Schedule full sync
   _syncTimer = setInterval(() => {
     runSync().catch(err => console.error('[MarketSync] Scheduled sync error:', err.message));
   }, SYNC_INTERVAL_MS);
 
-  console.log(`[MarketSync] Scheduled every ${SYNC_INTERVAL_MS / 60000} min`);
+  // Schedule frequent recurring-crypto refresh so live windows stay current
+  _recurringTimer = setInterval(() => {
+    syncRecurringCrypto().catch(err =>
+      console.error('[MarketSync] Recurring crypto sync error:', err.message));
+  }, RECURRING_SYNC_INTERVAL_MS);
+
+  console.log(`[MarketSync] Scheduled every ${SYNC_INTERVAL_MS / 60000} min  (recurring crypto every ${RECURRING_SYNC_INTERVAL_MS / 60000} min)`);
 }
 
 function stop() {
   if (_syncTimer) { clearInterval(_syncTimer); _syncTimer = null; }
+  if (_recurringTimer) { clearInterval(_recurringTimer); _recurringTimer = null; }
 }
 
-module.exports = { start, stop, runSync, trimToCategoryLimit };
+module.exports = { start, stop, runSync, syncRecurringCrypto, trimToCategoryLimit };

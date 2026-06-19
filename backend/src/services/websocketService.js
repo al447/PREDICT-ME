@@ -145,6 +145,25 @@ function initWebSocketServer(server) {
     }));
   });
   
+  // Heartbeat: ping all clients every 30s to prevent Render/proxy idle disconnect (60s timeout)
+  const heartbeatInterval = setInterval(() => {
+    wss.clients.forEach((ws) => {
+      if (ws.isAlive === false) {
+        ws.terminate();
+        return;
+      }
+      ws.isAlive = false;
+      ws.ping();
+    });
+  }, 30000);
+
+  wss.on('connection', (ws) => {
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
+  });
+
+  wss.on('close', () => clearInterval(heartbeatInterval));
+
   console.log('[WS] WebSocket server initialized');
   return wss;
 }

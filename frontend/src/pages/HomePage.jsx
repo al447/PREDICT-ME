@@ -1,11 +1,12 @@
-﻿import { useState, useEffect, useRef, lazy, Suspense } from "react";
+﻿import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ChevronLeft, ChevronRight, TrendingUp, ArrowRight, Flame, Zap, Bookmark } from "lucide-react";
 const HomeCarouselChart = lazy(() => import("../components/market/HomeCarouselChart"));
 import Layout from "../components/layout/Layout";
 import MarketCard from "../components/market/MarketCard";
 import { MarketCardSkeleton } from "../components/common/Skeleton";
-import { useMarkets } from "../hooks/useMarkets";
+// import FiveMinCryptoSection from "../components/market/FiveMinCryptoSection";
+import { useMarkets, useMarket } from "../hooks/useMarkets";
 import { marketsAPI } from "../services/api";
 import { formatVolume } from "../utils/format";
 
@@ -165,39 +166,41 @@ const HeroCarousel = ({ markets }) => {
         <Link to={`/market/${slide.slug}`} className="text-xs text-[var(--color-gold)] font-semibold hover:underline">Trade →</Link>
       </div>
 
-      <div className="flex items-center justify-between px-5 py-3 border-t border-[var(--color-card-border)]">
-        {/* Dots — left */}
-        <div className="flex gap-1.5">
-          {Array.from({ length: total }).map((_, i) => (
-            <button key={i} onClick={() => setIdx(i)} className={`h-1.5 rounded-full transition-all duration-300 ${i === idx ? "w-5 bg-[var(--color-gold)]" : "w-1.5 bg-[var(--color-text-muted)]/30"}`} />
-          ))}
+      {total > 1 && (
+        <div className="flex items-center justify-between px-5 py-3 border-t border-[var(--color-card-border)]">
+          {/* Dots — left */}
+          <div className="flex gap-1.5">
+            {Array.from({ length: total }).map((_, i) => (
+              <button key={i} onClick={() => setIdx(i)} className={`h-1.5 rounded-full transition-all duration-300 ${i === idx ? "w-5 bg-[var(--color-gold)]" : "w-1.5 bg-[var(--color-text-muted)]/30"}`} />
+            ))}
+          </div>
+          {/* Prev + Next buttons — right */}
+          <div className="flex gap-2">
+            {(() => {
+              const prevIdx = (idx - 1 + total) % total;
+              const prevMarket = markets[prevIdx];
+              return (
+                <button onClick={() => setIdx(prevIdx)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--color-card-border)] bg-[var(--color-surface2)] hover:border-[var(--color-text-muted)] transition-colors">
+                  <ChevronLeft className="w-3.5 h-3.5 text-[var(--color-text-muted)] flex-shrink-0" />
+                  <span className="text-[12px] font-medium text-[var(--color-text)] max-w-[120px] truncate">{prevMarket?.title?.split(' ').slice(0, 3).join(' ')}</span>
+                </button>
+              );
+            })()}
+            {(() => {
+              const nextIdx = (idx + 1) % total;
+              const nextMarket = markets[nextIdx];
+              return (
+                <button onClick={() => setIdx(nextIdx)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--color-card-border)] bg-[var(--color-surface2)] hover:border-[var(--color-text-muted)] transition-colors">
+                  <span className="text-[12px] font-medium text-[var(--color-text)] max-w-[120px] truncate">{nextMarket?.title?.split(' ').slice(0, 3).join(' ')}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted)] flex-shrink-0" />
+                </button>
+              );
+            })()}
+          </div>
         </div>
-        {/* Prev + Next buttons — right */}
-        <div className="flex gap-2">
-          {(() => {
-            const prevIdx = (idx - 1 + total) % total;
-            const prevMarket = markets[prevIdx];
-            return (
-              <button onClick={() => setIdx(prevIdx)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--color-card-border)] bg-[var(--color-surface2)] hover:border-[var(--color-text-muted)] transition-colors">
-                <ChevronLeft className="w-3.5 h-3.5 text-[var(--color-text-muted)] flex-shrink-0" />
-                <span className="text-[12px] font-medium text-[var(--color-text)] max-w-[120px] truncate">{prevMarket?.title?.split(' ').slice(0, 3).join(' ')}</span>
-              </button>
-            );
-          })()}
-          {(() => {
-            const nextIdx = (idx + 1) % total;
-            const nextMarket = markets[nextIdx];
-            return (
-              <button onClick={() => setIdx(nextIdx)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--color-card-border)] bg-[var(--color-surface2)] hover:border-[var(--color-text-muted)] transition-colors">
-                <span className="text-[12px] font-medium text-[var(--color-text)] max-w-[120px] truncate">{nextMarket?.title?.split(' ').slice(0, 3).join(' ')}</span>
-                <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted)] flex-shrink-0" />
-              </button>
-            );
-          })()}
-        </div>
-      </div>
+      )}
     </div>
   );
 };
@@ -271,14 +274,27 @@ const Sidebar = ({ markets }) => {
 
 const HomePage = () => {
   // Carousel: top 8 by volume24hr so it shows the *current* hottest markets, not stale ones
-  const { data: featData, isLoading: featLoading } = useMarkets({ sort: "volume24hr", limit: 8, status: "active" });
+  const { data: featData, isLoading: featLoading } = useMarkets({ sort: "volume24hr", limit: 30, status: "active" });
   const { data: trendData, isLoading: trendLoading } = useMarkets({ sort: "volume", limit: 16, status: "active" });
-  const featured = featData?.markets || [];
+  // Fetch pinned carousel markets by slug so they always appear regardless of volume rank
+  const { data: baseMarketData } = useMarket('pm-will-base-launch-a-token-in-2025-341');
+  const allFeatured = featData?.markets || [];
+  const featured = useMemo(() => {
+    const filtered = allFeatured.filter(m => /world cup winner/i.test(m.title) || /base.*launch.*token/i.test(m.title));
+    // If Base market wasn't in allFeatured (low volume), add it from the direct fetch
+    const baseMarket = baseMarketData?.market;
+    if (baseMarket && baseMarket.status === 'active' && !filtered.some(m => m.slug === baseMarket.slug)) {
+      filtered.push(baseMarket);
+    }
+    return filtered;
+  }, [allFeatured, baseMarketData]);
   const trending = trendData?.markets || [];
 
   return (
     <Layout>
       <div className="max-w-7xl mx-auto px-4 py-6 space-y-8">
+        {/* <FiveMinCryptoSection /> */}
+
         <section>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-base font-bold text-[var(--color-text)] flex items-center gap-2">
@@ -295,7 +311,7 @@ const HomePage = () => {
             </div>
             {featLoading
               ? <div className="w-full lg:w-72 xl:w-80 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] animate-pulse" style={{ minHeight: 480 }} />
-              : <Sidebar markets={featured} />
+              : <Sidebar markets={allFeatured} />
             }
           </div>
         </section>

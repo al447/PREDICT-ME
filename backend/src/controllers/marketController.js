@@ -34,14 +34,34 @@ const fetchPolymarketHistory = async (tokenId, numDays) => {
   }
 };
 
+// Frequency tag slug → Market.frequency value. Time-interval crypto markets
+// store their interval in the `frequency` field, NOT the `tags` array, so a
+// `tag=5-minute-crypto` filter must be translated to a `frequency` query.
+const FREQUENCY_TAGS = {
+  '5-minute-crypto': '5min', '5min-crypto': '5min',
+  '15-minute-crypto': '15min', '15min-crypto': '15min',
+  '1-hour-crypto': '1hour', 'hourly-crypto': '1hour',
+  '4-hour-crypto': '4hour',
+  'daily-crypto': 'daily', 'crypto-daily': 'daily',
+  'weekly-crypto': 'weekly', 'crypto-weekly': 'weekly',
+  'monthly-crypto': 'monthly', 'crypto-monthly': 'monthly',
+  'yearly-crypto': 'yearly', 'crypto-yearly': 'yearly',
+};
+
 const getMarkets = async (req, res, next) => {
   try {
-    const { category, search, sort, tag, status = 'active', page = 1, limit = 20, featured } = req.query;
+    const { category, search, sort, tag, frequency, status = 'active', page = 1, limit = 20, featured } = req.query;
 
     const query = {};
     if (status) query.status = status;
     if (category) query.categorySlug = category;
-    if (tag) query.tags = { $in: [tag] };
+    if (frequency) {
+      query.frequency = frequency;
+    } else if (tag && FREQUENCY_TAGS[tag]) {
+      query.frequency = FREQUENCY_TAGS[tag];
+    } else if (tag) {
+      query.tags = { $in: [tag] };
+    }
     if (search) query.$text = { $search: search };
     if (featured === 'true' || featured === true) query.featured = true;
     if (req.query.hotTopic === 'true') query.hotTopic = true;
@@ -317,11 +337,17 @@ const getMarketPriceHistory = async (req, res, next) => {
   }
 };
 
-// Extract crypto symbol and target price from market title/description
+// Extract crypto symbol and target price from market title/description.
+// If market.priceSymbol is set (e.g. for 5-min price markets), use it directly.
 // Examples: "Will ETH hit $5,000 by August 2026?" → { symbol: 'ETH', target: 5000 }
 const parseCryptoMarket = (market) => {
+  // Fast path: priceSymbol stored on document
+  if (market.priceSymbol) {
+    return { symbol: market.priceSymbol.toUpperCase(), target: market.priceTarget ?? null };
+  }
+
   const text = `${market.title} ${market.description || ''}`;
-  const symbolMatch = text.match(/\b(BTC|ETH|SOL|ADA|MATIC|DOT|AVAX|LINK|UNI|XRP|DOGE|SHIB|BNB|LTC|TRX|BITCOIN|ETHEREUM|SOLANA|CARDANO|POLYGON|POLKADOT|AVALANCHE|CHAINLINK)\b/i);
+  const symbolMatch = text.match(/\b(BTC|ETH|SOL|ADA|MATIC|DOT|AVAX|LINK|UNI|XRP|DOGE|SHIB|BNB|LTC|TRX|HYPE|BITCOIN|ETHEREUM|SOLANA|CARDANO|POLYGON|POLKADOT|AVALANCHE|CHAINLINK)\b/i);
   const targetMatch = text.match(/\$\s?([\d,]+(?:\.\d+)?)\s?(K|k|M|m)?/);
 
   if (!symbolMatch) return null;

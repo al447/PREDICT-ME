@@ -14,39 +14,30 @@ function getProxyDepositAddress(user) {
   return user?.smartWallet?.proxy || null;
 }
 
-// PredictMe runs on Polygon Amoy testnet with MockUSDC (6 decimals). Keep this page
-// aligned with DepositModal + backend — no mainnet/testnet address or RPC mismatch.
-const CHAIN_ID = parseInt(import.meta.env.VITE_CHAIN_ID || '80002', 10);
-const POLYGON_AMOY_RPC = import.meta.env.VITE_POLYGON_AMOY_RPC || 'https://polygon-amoy-bor-rpc.publicnode.com';
-const USDC_ADDRESS = import.meta.env.VITE_MOCK_USDC_ADDRESS || '0xC9EfbCF51e175a8171dDb7f65d709e71be969e56';
+// PredictMe runs on Polygon Mainnet with native USDC (6 decimals).
+// All configuration comes from environment variables - no testnet defaults.
+const CHAIN_ID = parseInt(import.meta.env.VITE_CHAIN_ID || '137', 10);
+const POLYGON_RPC = import.meta.env.VITE_POLYGON_RPC || 'https://polygon-bor-rpc.publicnode.com';
+const USDC_ADDRESS = import.meta.env.VITE_USDC_ADDRESS || '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
 const PLATFORM_WALLET = import.meta.env.VITE_PLATFORM_WALLET || '';
-// Full ABI for the calls this page makes (balance read, faucet mint, transfer).
+// Full ABI for the calls this page makes (balance read, transfer).
 const UsdcABI = [
   'function balanceOf(address owner) view returns (uint256)',
   'function transfer(address to, uint256 amount) returns (bool)',
   'function decimals() view returns (uint8)',
-  'function faucet()',
 ];
 
 const QUICK_AMOUNTS = [10, 50, 100, 500, 1000, 5000];
 
-// Chain configs for on-chain transfers
+// Chain configs for on-chain transfers - Mainnet only
 const CHAIN_CONFIGS = {
-  'polygon-amoy': {
-    chainId: parseInt(import.meta.env.VITE_CHAIN_ID || '80002', 10),
-    name: 'Polygon Amoy Testnet',
-    rpc: import.meta.env.VITE_POLYGON_AMOY_RPC || 'https://polygon-amoy-bor-rpc.publicnode.com',
+  'polygon': {
+    chainId: parseInt(import.meta.env.VITE_CHAIN_ID || '137', 10),
+    name: 'Polygon Mainnet',
+    rpc: import.meta.env.VITE_POLYGON_RPC || 'https://polygon-bor-rpc.publicnode.com',
     nativeCurrency: { name: 'POL', symbol: 'POL', decimals: 18 },
-    blockExplorer: import.meta.env.VITE_BLOCK_EXPLORER || 'https://amoy.polygonscan.com',
+    blockExplorer: import.meta.env.VITE_BLOCK_EXPLORER || 'https://polygonscan.com',
     usdcAddress: USDC_ADDRESS,
-  },
-  'sepolia': {
-    chainId: 11155111,
-    name: 'Sepolia Testnet',
-    rpc: 'https://ethereum-sepolia-rpc.publicnode.com',
-    nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
-    blockExplorer: 'https://sepolia.etherscan.io',
-    usdcAddress: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', // USDC
   },
 };
 
@@ -58,7 +49,7 @@ const DepositPage = () => {
   const [depositResult, setDepositResult] = useState(null);
   const [walletBalance, setWalletBalance] = useState(null);
   const [mode, setMode] = useState('transfer'); // transfer | claim
-  const [selectedChain, setSelectedChain] = useState('polygon-amoy');
+  const [selectedChain, setSelectedChain] = useState('polygon');
   const [selectedToken, setSelectedToken] = useState('USDC');
   const [txHash, setTxHash] = useState('');
   const [showChainDropdown, setShowChainDropdown] = useState(false);
@@ -73,7 +64,7 @@ const DepositPage = () => {
         const accounts = await bp.send('eth_accounts', []);
         const addr = accounts?.[0];
         if (!addr) return;
-        const provider = new ethers.JsonRpcProvider(POLYGON_AMOY_RPC);
+        const provider = new ethers.JsonRpcProvider(POLYGON_RPC);
         const usdc = new ethers.Contract(USDC_ADDRESS, UsdcABI, provider);
         const bal = await usdc.balanceOf(addr);
         setWalletBalance(Number(bal) / 1e6);
@@ -110,7 +101,7 @@ const DepositPage = () => {
       if (switchErr.code === 4902) {
         await window.ethereum.request({
           method: 'wallet_addEthereumChain',
-          params: [{ chainId: chainHex, chainName: 'Polygon Amoy Testnet', nativeCurrency: { name: 'POL', symbol: 'POL', decimals: 18 }, rpcUrls: [POLYGON_AMOY_RPC], blockExplorerUrls: [import.meta.env.VITE_BLOCK_EXPLORER] }],
+          params: [{ chainId: chainHex, chainName: 'Polygon Mainnet', nativeCurrency: { name: 'POL', symbol: 'POL', decimals: 18 }, rpcUrls: [POLYGON_RPC], blockExplorerUrls: [import.meta.env.VITE_BLOCK_EXPLORER || 'https://polygonscan.com'] }],
         });
       } else {
         throw switchErr;
@@ -120,28 +111,9 @@ const DepositPage = () => {
     await new Promise(r => setTimeout(r, 500));
   };
 
+  // Faucet disabled on mainnet - users must acquire USDC from exchanges
   const handleMintFaucet = async () => {
-    if (!window.ethereum) return;
-    try {
-      await ensureNetwork();
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
-      const usdc = new ethers.Contract(USDC_ADDRESS, UsdcABI, signer);
-      toast.loading('Minting 10,000 test USDC...', { id: 'faucet' });
-      const tx = await usdc.faucet();
-      await tx.wait();
-      toast.success('10,000 USDC minted!', { id: 'faucet' });
-      // Refresh balance
-      const bal = await usdc.balanceOf(await signer.getAddress());
-      setWalletBalance(Number(bal) / 1e6);
-    } catch (err) {
-      toast.dismiss('faucet');
-      if (err.code === 'ACTION_REJECTED' || err.code === 4001) {
-        toast.error('Transaction rejected');
-      } else {
-        toast.error('Mint failed: ' + (err.shortMessage || err.message));
-      }
-    }
+    toast.error('Faucet not available on mainnet. Please acquire USDC from a centralized exchange or DEX.');
   };
 
   const handleDeposit = async () => {
@@ -174,13 +146,13 @@ const DepositPage = () => {
       const userAddr = await signer.getAddress();
 
       // 3. Check USDC balance using read-only RPC (avoids stale MetaMask state)
-      const readProvider = new ethers.JsonRpcProvider(POLYGON_AMOY_RPC);
+      const readProvider = new ethers.JsonRpcProvider(POLYGON_RPC);
       const readUsdc = new ethers.Contract(USDC_ADDRESS, UsdcABI, readProvider);
       const balance = await readUsdc.balanceOf(userAddr);
       const amountWei = BigInt(Math.floor(parsedAmount * 1e6));
 
       if (balance < amountWei) {
-        toast.error(`Insufficient USDC. Wallet has ${(Number(balance) / 1e6).toFixed(2)} USDC. Click "Mint Test USDC" to get more.`);
+        toast.error(`Insufficient USDC. Wallet has ${(Number(balance) / 1e6).toFixed(2)} USDC. Please acquire more USDC from an exchange.`);
         setStep('input');
         return;
       }
@@ -199,7 +171,7 @@ const DepositPage = () => {
 
       // 5. Notify backend to credit balance using NEW deposit API
       const { data } = await depositAPI.claim({
-        chain: 'polygon-amoy',
+        chain: 'polygon',
         token: 'USDC',
         txHash: receipt.hash,
         amount: parsedAmount,
@@ -425,8 +397,8 @@ const DepositPage = () => {
                 <div className="flex items-center gap-3 p-3 rounded-xl bg-[#4f6ef7]/5 border border-[#4f6ef7]/15">
                   <Wallet className="w-5 h-5 text-[#4f6ef7]" />
                   <div className="text-xs">
-                    <p className="font-medium text-[var(--color-text)]">Polygon Amoy Testnet · USDC</p>
-                    <p className="text-[var(--color-text-muted)]">Transfer MockUSDC to your personal deposit wallet</p>
+                    <p className="font-medium text-[var(--color-text)]">Polygon Mainnet · USDC</p>
+                    <p className="text-[var(--color-text-muted)]">Transfer native USDC to your personal deposit wallet</p>
                   </div>
                 </div>
                 {getProxyDepositAddress(user) ? (
@@ -523,7 +495,7 @@ const DepositPage = () => {
             <div className="flex items-start gap-2 p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/10">
               <Shield className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
               <p className="text-xs text-[var(--color-text-muted)]">
-                <span className="font-medium text-emerald-400">On-chain transfer</span> — MockUSDC will be transferred from your wallet to the platform on Polygon Amoy. MetaMask will prompt you to confirm.
+                <span className="font-medium text-emerald-400">On-chain transfer</span> — USDC will be transferred from your wallet to the platform on Polygon. MetaMask will prompt you to confirm.
               </p>
             </div>
           </div>

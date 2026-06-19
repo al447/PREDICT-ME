@@ -49,7 +49,10 @@
     "seed": "node src/seeds/seedMarkets.js",
     "seed:admin": "node src/scripts/seedAdmin.js",
     "seed:referral": "node src/scripts/seedReferral.js",
-    "reset": "node src/scripts/resetAll.js --confirm"
+    "reset": "node src/scripts/resetAll.js --confirm",
+    "audit:onchain": "node scripts/audit-onchain-markets.js",
+    "fix:onchain-flag": "node scripts/audit-onchain-markets.js --fix-flag",
+    "fix:onchain-chain": "node scripts/audit-onchain-markets.js --fix-chain"
   },
   "jest": {
     "testEnvironment": "node",

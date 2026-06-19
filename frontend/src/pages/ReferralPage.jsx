@@ -36,9 +36,12 @@ const ReferralPage = () => {
 
   const fetchData = async () => {
     try {
-      const statsRes = await referralAPI.getMe();
+      const [statsRes, historyRes] = await Promise.all([
+        referralAPI.getMe(),
+        referralAPI.getHistory({ limit: 50 }),
+      ]);
       setStats(statsRes.data);
-      setHistory(statsRes.data?.data?.recentReferrals || []);
+      setHistory(statsRes.data?.data?.recentReferrals || historyRes.data?.referrals || []);
     } catch (err) {
       toast.error('Failed to load referral data');
     } finally {
@@ -230,6 +233,7 @@ const ReferralPage = () => {
               {[
                 { id: 'overview', label: 'Overview', icon: TrendingUp },
                 { id: 'referrals', label: 'My Referrals', icon: Users },
+                { id: 'commissions', label: 'Commissions', icon: DollarSign },
               ].map(tab => (
                 <button
                   key={tab.id}
@@ -347,30 +351,67 @@ const ReferralPage = () => {
                 )}
               </div>
             )}
+
+            {activeTab === 'commissions' && (
+              <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-6">
+                <h3 className="font-semibold text-[var(--color-text)] mb-4">Commission History</h3>
+                {(stats?.data?.recentCommissions || []).length === 0 ? (
+                  <div className="text-center py-8 text-[var(--color-text-muted)]">
+                    <DollarSign className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                    <p>No commissions earned yet.</p>
+                    <p className="text-xs mt-1">Refer friends who trade to start earning 5% of their fees.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {(stats?.data?.recentCommissions || []).map((c, idx) => (
+                      <div 
+                        key={c._id || idx}
+                        className="flex items-center justify-between p-3 bg-[var(--color-surface2)] rounded-lg"
+                      >
+                        <div>
+                          <p className="text-sm font-medium text-[var(--color-text)]">
+                            Commission from {c.referee?.username || 'referral'}
+                          </p>
+                          <p className="text-xs text-[var(--color-text-muted)]">
+                            {c.createdAt ? new Date(c.createdAt).toLocaleDateString() : ''}
+                          </p>
+                        </div>
+                        <span className="text-sm font-bold text-emerald-400">
+                          +${c.commissionAmount?.toFixed(2) || '0.00'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Right Column - Milestones & Info */}
           <div className="space-y-6">
             {/* Milestones Card */}
-            {/* <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-6">
+            <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-6">
               <h3 className="font-semibold text-[var(--color-text)] mb-4 flex items-center gap-2">
                 <Trophy className="w-5 h-5 text-[var(--color-gold)]" />
                 Milestone Rewards
               </h3>
-
-              {milestones.length === 0 ? (
-                <p className="text-sm text-[var(--color-text-muted)]">
-                  Milestone rewards coming soon
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  {milestones.map((m, idx) => (
+              <div className="space-y-3">
+                {[
+                  { count: 5, bonus: 50 },
+                  { count: 10, bonus: 150 },
+                  { count: 25, bonus: 500 },
+                  { count: 100, bonus: 2500 },
+                ].map((m, idx) => {
+                  const qualifiedCount = stats?.data?.qualifiedCount || 0;
+                  const achieved = qualifiedCount >= m.count;
+                  const isNext = !achieved && (idx === 0 || qualifiedCount >= [5, 10, 25, 100][idx - 1]);
+                  return (
                     <div 
                       key={idx}
                       className={`p-3 rounded-lg border ${
-                        m.achieved 
+                        achieved 
                           ? 'bg-emerald-500/5 border-emerald-500/20' 
-                          : m === nextMilestone
+                          : isNext
                           ? 'bg-[var(--color-gold)]/5 border-[var(--color-gold)]/20'
                           : 'bg-[var(--color-surface2)] border-[var(--color-border)]'
                       }`}
@@ -379,12 +420,12 @@ const ReferralPage = () => {
                         <span className="text-sm font-medium text-[var(--color-text)]">
                           {m.count} Referrals
                         </span>
-                        {m.achieved && <Check className="w-4 h-4 text-emerald-500" />}
+                        {achieved && <Check className="w-4 h-4 text-emerald-500" />}
                       </div>
                       <p className="text-xs text-[var(--color-text-muted)]">
                         Earn ${m.bonus} bonus
                       </p>
-                      {!m.achieved && m === nextMilestone && (
+                      {isNext && (
                         <div className="mt-2">
                           <div className="h-1.5 bg-[var(--color-surface2)] rounded-full overflow-hidden">
                             <div 
@@ -398,10 +439,10 @@ const ReferralPage = () => {
                         </div>
                       )}
                     </div>
-                  ))}
-                </div>
-              )}
-            </div> */}
+                  );
+                })}
+              </div>
+            </div>
 
             {/* How It Works */}
             <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-6">

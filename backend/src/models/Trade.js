@@ -4,7 +4,7 @@ const tradeSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     market: { type: mongoose.Schema.Types.ObjectId, ref: 'Market', required: true },
-    conditionId: { type: String, index: true }, // CTF conditionId for CLOB position tracking
+    conditionId: { type: String }, // CTF conditionId for CLOB position tracking
     outcome: { type: String, required: true },
     candidate: { type: String, default: null },      // for grouped markets e.g. "Spain"
     amount: { type: Number, required: true, min: 1 },
@@ -15,6 +15,7 @@ const tradeSchema = new mongoose.Schema(
     txHash: { type: String, default: null },
     idempotencyKey: { type: String },
     payout: { type: Number, default: null }, // net payout credited on win/refund
+    settledAt: { type: Date, default: null }, // when the trade was settled (won/lost/refunded)
   },
   { timestamps: true }
 );

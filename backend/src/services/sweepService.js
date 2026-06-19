@@ -35,16 +35,17 @@ const _providers = {};
 function getProvider(chainId) {
   if (_providers[chainId]) return _providers[chainId];
   const urls = {
-    1:     process.env.ETH_RPC_URL       || 'https://eth.llamarpc.com',
-    8453:  process.env.BASE_RPC_URL      || 'https://mainnet.base.org',
-    42161: process.env.ARB_RPC_URL       || 'https://arb1.arbitrum.io/rpc',
-    10:    process.env.OP_RPC_URL        || 'https://mainnet.optimism.io',
-    43114: process.env.AVAX_RPC_URL      || 'https://api.avax.network/ext/bc/C/rpc',
-    137:   process.env.POLYGON_RPC_URL   || 'https://polygon-rpc.com',
+    1:     process.env.ETH_RPC_URL       || 'https://ethereum-rpc.publicnode.com',
+    8453:  process.env.BASE_RPC_URL      || 'https://base-rpc.publicnode.com',
+    42161: process.env.ARB_RPC_URL       || 'https://arbitrum-one-rpc.publicnode.com',
+    10:    process.env.OP_RPC_URL        || 'https://optimism-rpc.publicnode.com',
+    43114: process.env.AVAX_RPC_URL      || 'https://avalanche-c-chain-rpc.publicnode.com',
+    137:   process.env.POLYGON_RPC_URL   || 'https://polygon-bor-rpc.publicnode.com',
   };
   const url = urls[chainId];
   if (!url) throw new Error(`[Sweep] No RPC for chainId ${chainId}`);
-  _providers[chainId] = new ethers.JsonRpcProvider(url);
+  const { createProvider } = require('../config/contracts');
+  _providers[chainId] = createProvider(url, chainId);
   return _providers[chainId];
 }
 
@@ -85,6 +86,9 @@ async function processDeposit(depositId) {
     } else {
       throw new Error(`[Sweep] Unknown chainType: ${deposit.chainType}`);
     }
+
+    // Deferred means the sweep was skipped (e.g. missing operator key) — deposit reset to 'detected'
+    if (result.deferred) return;
 
     // CCTP goes to 'attesting' (waiting for Circle attestation); all others go to 'bridging'
     const nextStatus = result.provider === 'cctp' ? 'attesting' : 'bridging';
@@ -143,13 +147,16 @@ async function sweepEvm(deposit, user) {
   const ERC20_ABI = ['function approve(address spender, uint256 amount) returns (bool)'];
   const usdcContract = new ethers.Contract(usdcAddress, ERC20_ABI, signer);
 
+  // Use quoteId from Across response as timestamp (it's the timestamp from /suggested-fees)
+  const quoteTimestamp = quote.quoteId ? parseInt(quote.quoteId) : Math.floor(Date.now() / 1000);
+
   const calldata = await across.buildDepositCalldata({
     fromChainId:     sourceChainId,
     inputToken:      usdcAddress,
     outputToken:     '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
     amount:          amountBN.toString(),
     recipient:       safeAddress,
-    quoteTimestamp:  Math.floor(Date.now() / 1000),
+    quoteTimestamp,
   });
 
   // Approve SpokePool to pull USDC from intake address
@@ -179,7 +186,17 @@ async function sweepSolana(deposit, user) {
   // 1. Ensure the intake address has enough SOL for gas
   const { PublicKey } = require('@solana/web3.js');
   const intakePubkey = new PublicKey(keypair.secretKey.slice(32)).toBase58();
-  await ensureSolanaGas(intakePubkey);
+  try {
+    await ensureSolanaGas(intakePubkey);
+  } catch (err) {
+    if (err.retryable) {
+      // Reset to 'detected' so the deposit watcher retries on the next poll cycle
+      await BridgeDeposit.findByIdAndUpdate(deposit._id, { status: 'detected' });
+      console.warn(`[Sweep][SVM] Retryable error for deposit ${deposit._id} — reset to detected: ${err.message}`);
+      return { provider: 'cctp', txHash: null, deferred: true };
+    }
+    throw err;
+  }
 
   // 2. Burn USDC on Solana via CCTP
   const result = await cctp.burnOnSolana({

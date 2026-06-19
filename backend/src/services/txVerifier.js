@@ -108,7 +108,8 @@ const getProvider = (chain) => {
   if (!url) {
     throw new Error(`No RPC URL configured for chain: ${chain}`);
   }
-  _providers[chain] = new ethers.JsonRpcProvider(url);
+  const { createProvider, CHAIN_ID_BY_NAME } = require('../config/contracts');
+  _providers[chain] = createProvider(url, CHAIN_ID_BY_NAME[chain]);
   return _providers[chain];
 };
 

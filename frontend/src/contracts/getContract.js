@@ -8,7 +8,7 @@ import { getSigner } from '../lib/getSigner.js';
 import * as addresses from './addresses.js';
 
 // Import all ABIs
-import MockUSDC from './MockUSDC.json';
+import USDC from './USDC.json';
 import ConditionalTokens from './ConditionalTokens.json';
 import CTFExchange from './CTFExchange.json';
 import UmaCtfAdapter from './UmaCtfAdapter.json';
@@ -16,9 +16,10 @@ import NegRiskAdapter from './NegRiskAdapter.json';
 import NegRiskExchange from './NegRiskExchange.json';
 import WalletFactory from './WalletFactory.json';
 import MarketFactory from './MarketFactory.json';
+import WrappedCollateral from './WrappedCollateral.json';
 
 const ABIS = {
-  MockUSDC,
+  USDC,
   ConditionalTokens,
   CTFExchange,
   UmaCtfAdapter,
@@ -26,10 +27,11 @@ const ABIS = {
   NegRiskExchange,
   WalletFactory,
   MarketFactory,
+  WrappedCollateral,  // For deposit wrapping
 };
 
 const CONTRACT_NAMES = {
-  MockUSDC: 'MOCK_USDC_ADDRESS',
+  USDC: 'USDC_ADDRESS',
   ConditionalTokens: 'CONDITIONAL_TOKENS_ADDRESS',
   CTFExchange: 'CTF_EXCHANGE_ADDRESS',
   UmaCtfAdapter: 'UMA_CTF_ADAPTER_ADDRESS',
@@ -37,6 +39,7 @@ const CONTRACT_NAMES = {
   NegRiskExchange: 'NEG_RISK_EXCHANGE_ADDRESS',
   WalletFactory: 'WALLET_FACTORY_ADDRESS',
   MarketFactory: 'MARKET_FACTORY_ADDRESS',
+  WrappedCollateral: 'WRAPPED_COLLATERAL_ADDRESS',
 };
 
 /**

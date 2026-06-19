@@ -86,6 +86,15 @@ orderSchema.index({ conditionId: 1, tokenId: 1, status: 1, side: 1, price: -1 })
 orderSchema.index({ maker: 1, status: 1 }); // User's open orders
 orderSchema.index({ status: 1, expiration: 1 }); // Expired order cleanup
 
+// TTL index: auto-delete cancelled/filled orders after 2 days to prevent storage bloat
+orderSchema.index(
+  { updatedAt: 1 },
+  {
+    expireAfterSeconds: 172800, // 2 days
+    partialFilterExpression: { status: { $in: ['cancelled', 'filled'] } }
+  }
+);
+
 // Virtual for total notional value
 orderSchema.virtual('notional').get(function() {
   return this.price * this.size;

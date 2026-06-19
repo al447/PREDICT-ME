@@ -19,13 +19,13 @@
 
 const { ethers } = require('ethers');
 const User = require('../models/User');
-const { ADDRESSES, ABIS, RPC_URL, CHAIN_ID, getRelayerKey } = require('../config/contracts');
+const { ADDRESSES, ABIS, RPC_URL, CHAIN_ID, getRelayerKey, getPolygonProvider } = require('../config/contracts');
 
 let _provider = null;
 let _relayerWallet = null;
 
 function getProvider() {
-  if (!_provider) _provider = new ethers.JsonRpcProvider(RPC_URL);
+  if (!_provider) _provider = getPolygonProvider();
   return _provider;
 }
 
@@ -204,7 +204,7 @@ async function ensureSmartWalletDeployed(user) {
  * @returns {Promise<number>} USDC (human-readable, 6 decimals)
  */
 async function getSmartWalletBalance(proxyAddress) {
-  const usdc = new ethers.Contract(ADDRESSES.MOCK_USDC, ABIS.MOCK_USDC, getProvider());
+  const usdc = new ethers.Contract(ADDRESSES.USDC, ABIS.USDC, getProvider());
   const raw = await usdc.balanceOf(proxyAddress);
   return Number(raw) / 1e6;
 }
@@ -216,7 +216,7 @@ async function getSmartWalletBalance(proxyAddress) {
  */
 async function ensureProxyExchangeApproval(proxyAddress) {
   const relayer = getRelayerWallet();
-  const usdc = new ethers.Contract(ADDRESSES.MOCK_USDC, [
+  const usdc = new ethers.Contract(ADDRESSES.USDC, [
     'function allowance(address,address) view returns (uint256)',
     'function approve(address,uint256) returns (bool)',
   ], relayer);
@@ -233,7 +233,7 @@ async function ensureProxyExchangeApproval(proxyAddress) {
   // Return the calldata for the caller to submit:
   const iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
   const data = iface.encodeFunctionData('approve', [ADDRESSES.CTF_EXCHANGE, ethers.MaxUint256]);
-  return { to: ADDRESSES.MOCK_USDC, data, value: '0' };
+  return { to: ADDRESSES.USDC, data, value: '0' };
 }
 
 module.exports = {

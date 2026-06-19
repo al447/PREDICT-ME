@@ -13,7 +13,10 @@
 
 import { useState, useEffect, useRef } from 'react';
 
-const WS_URL = import.meta.env.VITE_WS_URL || `ws://${window.location.hostname}:5000`;
+const _WS_BASE = import.meta.env.VITE_BACKEND_URL
+  ? import.meta.env.VITE_BACKEND_URL.replace(/^http/, 'ws')
+  : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
+const WS_URL = `${_WS_BASE}/ws`;
 
 const useCryptoPriceStream = (symbols = []) => {
   const [prices, setPrices] = useState({});
@@ -32,6 +35,10 @@ const useCryptoPriceStream = (symbols = []) => {
         wsRef.current = ws;
 
         ws.onopen = () => {
+          if (!mountedRef.current) {
+            ws.close();
+            return;
+          }
           ws.send(JSON.stringify({ type: 'subscribe_crypto_prices', symbols }));
         };
 
@@ -63,7 +70,8 @@ const useCryptoPriceStream = (symbols = []) => {
     return () => {
       mountedRef.current = false;
       clearTimeout(reconnectTimer.current);
-      wsRef.current?.close();
+      // Only close an open socket; a CONNECTING socket is closed by onopen above.
+      if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.close();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbols.join(',')]);

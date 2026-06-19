@@ -5,8 +5,10 @@
 import { Magic } from 'magic-sdk';
 import { OAuthExtension } from '@magic-ext/oauth2';
 
-const RPC_URL = import.meta.env.VITE_POLYGON_AMOY_RPC || 'https://polygon-amoy-bor-rpc.publicnode.com';
-const CHAIN_ID = Number(import.meta.env.VITE_CHAIN_ID || '80002');
+// Magic SDK requires a polygon.technology RPC — publicnode.com is blocked by Magic iframe CSP.
+// For mainnet (chainId 137) use the official Polygon mainnet RPC.
+const RPC_URL = import.meta.env.VITE_POLYGON_RPC || 'https://polygon-rpc.com';
+const CHAIN_ID = Number(import.meta.env.VITE_CHAIN_ID || '137');
 const PUBLISHABLE_KEY = import.meta.env.VITE_MAGIC_PUBLISHABLE_KEY;
 
 // Initialized synchronously at module load — always non-null if key is set.

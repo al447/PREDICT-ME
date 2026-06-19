@@ -35,10 +35,10 @@ async function getEthersSigner() {
   throw new Error('No wallet signer found. Please connect a wallet.');
 }
 
-// Withdrawals run on Polygon Amoy with MockUSDC (6 decimals) — read the on-chain
+// Withdrawals run on Polygon Mainnet with native USDC (6 decimals) — read the on-chain
 // wallet balance from the same network/token the platform actually sends.
-const USDC_ADDRESS = import.meta.env.VITE_MOCK_USDC_ADDRESS || '0xC9EfbCF51e175a8171dDb7f65d709e71be969e56';
-const POLYGON_RPC = import.meta.env.VITE_POLYGON_AMOY_RPC || 'https://polygon-amoy-bor-rpc.publicnode.com';
+const USDC_ADDRESS = import.meta.env.VITE_USDC_ADDRESS || '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
+const POLYGON_RPC = import.meta.env.VITE_POLYGON_RPC || 'https://polygon-bor-rpc.publicnode.com';
 const UsdcABI = ['function balanceOf(address owner) view returns (uint256)'];
 
 const QUICK_AMOUNTS = [10, 50, 100, 500, 1000];
@@ -63,18 +63,38 @@ const WithdrawPage = () => {
   const [bridgeQuote, setBridgeQuote]     = useState(null);
   const [quoteLoading, setQuoteLoading]   = useState(false);
   const [withdrawalId, setWithdrawalId]   = useState(null);
+  const [destChains, setDestChains]       = useState([]);
+  const [isTestnet, setIsTestnet]         = useState(false);
 
-  const DEST_CHAINS = [
-    { chainType: 'evm', chainId: 1,     label: 'Ethereum',  tokens: ['USDC'] },
-    { chainType: 'evm', chainId: 8453,  label: 'Base',      tokens: ['USDC'] },
-    { chainType: 'evm', chainId: 42161, label: 'Arbitrum',  tokens: ['USDC'] },
-    { chainType: 'evm', chainId: 10,    label: 'Optimism',  tokens: ['USDC'] },
-    { chainType: 'evm', chainId: 43114, label: 'Avalanche', tokens: ['USDC'] },
-    { chainType: 'svm', chainId: null,  label: 'Solana',    tokens: ['USDC'] },
-    { chainType: 'btc', chainId: null,  label: 'Bitcoin',   tokens: ['BTC']  },
-  ];
+  // Fetch supported chains from backend (handles mainnet vs testnet automatically)
+  useEffect(() => {
+    bridgeAPI.getSupportedAssets()
+      .then(({ data }) => {
+        if (data.success && data.chains) {
+          // Transform backend chain format to frontend format
+          const transformed = data.chains.map(c => ({
+            chainType: c.chainType,
+            chainId: c.chainId,
+            label: c.name,
+            tokens: c.tokens,
+            isTestnet: c.isTestnet,
+          }));
+          setDestChains(transformed);
+          setIsTestnet(data.isTestnet || false);
+          // Set default to first chain
+          if (transformed.length > 0) {
+            const firstEvm = transformed.find(c => c.chainType === 'evm');
+            if (firstEvm) {
+              setDestChainType('evm');
+              setDestChainId(firstEvm.chainId);
+            }
+          }
+        }
+      })
+      .catch(err => console.warn('[Withdraw] Failed to load supported chains:', err.message));
+  }, []);
 
-  const selectedDest = DEST_CHAINS.find(c => c.chainType === destChainType && c.chainId === destChainId) || DEST_CHAINS[0];
+  const selectedDest = destChains.find(c => c.chainType === destChainType && c.chainId === destChainId) || destChains[0] || { label: 'Ethereum', tokens: ['USDC'] };
 
   const fetchQuote = async () => {
     const amt = parseFloat(amount);
@@ -341,6 +361,15 @@ const WithdrawPage = () => {
         {/* ══ CRYPTO TAB (multi-chain withdrawal) ══ */}
         {tab === 'crypto' && step === 'input' && (
           <div className="space-y-5">
+            {/* Testnet warning */}
+            {isTestnet && (
+              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                <p className="text-xs text-amber-400 text-center">
+                  🧪 Testnet Mode: Withdrawals are SIMULATED. No real funds will be transferred.
+                </p>
+              </div>
+            )}
+
             {/* Balance */}
             <div className="p-4 rounded-xl bg-[var(--color-surface2)] border border-[var(--color-border)]">
               <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider mb-1">Available Balance</p>
@@ -351,7 +380,12 @@ const WithdrawPage = () => {
             <div>
               <p className="text-sm font-medium text-[var(--color-text)] mb-2">Destination Chain</p>
               <div className="grid grid-cols-4 gap-2">
-                {DEST_CHAINS.map((c) => (
+                {destChains.length === 0 && (
+                  <div className="col-span-4 text-center text-sm text-[var(--color-text-muted)] py-2">
+                    Loading chains...
+                  </div>
+                )}
+                {destChains.map((c) => (
                   <button
                     key={`${c.chainType}-${c.chainId}`}
                     onClick={() => { setDestChainType(c.chainType); setDestChainId(c.chainId); setDestToken(c.tokens[0]); setBridgeQuote(null); }}

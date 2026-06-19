@@ -3,6 +3,8 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
  * @title  IConditionalTokens — minimal CTF interface used by MarketFactory
@@ -47,6 +49,7 @@ interface ICTFExchange {
  * @dev    Deployed by DeployM1.s.sol.
  */
 contract MarketFactory is Ownable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
 
     // ─── Types ────────────────────────────────────────────────────────────────
     struct MarketInfo {
@@ -131,15 +134,35 @@ contract MarketFactory is Ownable, ReentrancyGuard {
         uint256 liveness,
         bool    useNegRisk
     ) external onlyOwner nonReentrant returns (bytes32) {
+        require(ancillaryData.length != 0, "ancillaryData=0");
+        require(rewardToken != address(0), "rewardToken=0");
+
         _CreateVars memory v;
+
+        // 0. If a UMA reward is configured, pull it from the caller and approve
+        //    the adapter to spend exactly that amount. UmaCtfAdapter.initialize()
+        //    transfers `reward` of `rewardToken` from msg.sender (this factory).
+        if (reward > 0) {
+            IERC20(rewardToken).safeTransferFrom(msg.sender, address(this), reward);
+            IERC20(rewardToken).forceApprove(address(umaAdapter), reward);
+        }
 
         // 1. Initialize UMA question → get questionId
         //    NOTE: UmaCtfAdapter.initialize() calls ctf.prepareCondition() internally,
         //    so we must NOT call it again here.
         v.questionId = umaAdapter.initialize(ancillaryData, rewardToken, reward, proposalBond, liveness);
 
+        // Clear any residual allowance (defense-in-depth; adapter pulls exactly `reward`).
+        if (reward > 0) {
+            IERC20(rewardToken).forceApprove(address(umaAdapter), 0);
+        }
+
         // 2. Derive conditionId (condition already prepared by UmaCtfAdapter)
         v.conditionId = ctf.getConditionId(address(umaAdapter), v.questionId, BINARY_OUTCOME_SLOTS);
+
+        // Guard against silently overwriting an existing market (duplicate ancillaryData
+        // yields the same questionId/conditionId).
+        require(markets[v.conditionId].createdAt == 0, "market exists");
 
         // 3. Derive YES/NO ERC1155 tokenIds
         v.yesCollection = ctf.getCollectionId(EMPTY_PARENT_COLLECTION, v.conditionId, 1);
@@ -147,13 +170,7 @@ contract MarketFactory is Ownable, ReentrancyGuard {
         v.token0 = ctf.getPositionId(collateral, v.yesCollection);
         v.token1 = ctf.getPositionId(collateral, v.noCollection);
 
-        // 4. Register on exchange(s)
-        exchange.registerToken(v.token0, v.token1, v.conditionId);
-        if (useNegRisk && address(negRiskExchange) != address(0)) {
-            negRiskExchange.registerToken(v.token0, v.token1, v.conditionId);
-        }
-
-        // 5. Store + emit
+        // 4. Store state BEFORE external exchange interactions (checks-effects-interactions)
         markets[v.conditionId] = MarketInfo({
             questionId:  v.questionId,
             conditionId: v.conditionId,
@@ -164,6 +181,12 @@ contract MarketFactory is Ownable, ReentrancyGuard {
             negRisk:     useNegRisk
         });
         allConditionIds.push(v.conditionId);
+
+        // 5. Register on exchange(s)
+        exchange.registerToken(v.token0, v.token1, v.conditionId);
+        if (useNegRisk && address(negRiskExchange) != address(0)) {
+            negRiskExchange.registerToken(v.token0, v.token1, v.conditionId);
+        }
 
         emit MarketCreated(v.conditionId, v.questionId, v.token0, v.token1, collateral, useNegRisk, ancillaryData);
         return v.conditionId;

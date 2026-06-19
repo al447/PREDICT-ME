@@ -8,7 +8,15 @@ import "@openzeppelin/contracts/access/Ownable.sol";
  * @title  MockUSDC
  * @notice 6-decimal ERC-20 used as canonical CTF collateral on Polygon Amoy testnet.
  *         Anyone can mint via faucet() for testing.
- * @dev    Deployed by DeployM1.s.sol.  Address written to contracts/deployments/amoy.json.
+ *
+ * @dev    ⚠️ TESTNET ONLY — DO NOT DEPLOY TO MAINNET.
+ *         This token has an unlimited owner mint() and an open faucet(); it has
+ *         no economic value and exists solely to exercise the CTF stack on
+ *         Polygon Amoy. On mainnet, real USDC (0x3c499c.. on Polygon) is the
+ *         collateral and this contract MUST NOT be part of the deployment set.
+ *         Excluded from the production audit scope.
+ *
+ *         Deployed by DeployM1.s.sol. Address written to contracts/deployments/amoy.json.
  */
 contract MockUSDC is ERC20, Ownable {
     uint8 private constant DECIMALS = 6;

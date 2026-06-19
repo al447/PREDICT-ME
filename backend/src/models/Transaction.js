@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const transactionSchema = new mongoose.Schema(
   {
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     type: {
       type: String,
       enum: ['deposit', 'withdrawal', 'trade', 'referral_signup_bonus', 'referral_commission', 'referral_milestone', 'referral_admin_adjustment'],

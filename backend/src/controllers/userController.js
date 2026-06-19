@@ -195,8 +195,8 @@ const deposit = async (req, res, next) => {
       if (!receipt) return res.status(400).json({ success: false, error: 'Transaction not found' });
       if (receipt.status !== 1) return res.status(400).json({ success: false, error: 'Transaction failed on-chain' });
 
-      const usdcAddr = (process.env.MOCK_USDC_ADDRESS || '').toLowerCase();
-      const usdcContract = new ethers.Contract(process.env.MOCK_USDC_ADDRESS, UsdcABI, provider);
+      const usdcAddr = (process.env.USDC_ADDRESS || process.env.MOCK_USDC_ADDRESS || '').toLowerCase();
+      const usdcContract = new ethers.Contract(process.env.USDC_ADDRESS || process.env.MOCK_USDC_ADDRESS, UsdcABI, provider);
 
       let matched = null;
       for (const log of receipt.logs) {
@@ -238,9 +238,10 @@ const deposit = async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'Transaction verification failed: ' + e.message });
     }
 
-    // Sync balance from chain (source of truth)
-    const syncResult = await balanceSyncService.syncUser(user);
-    const newBalance = syncResult.onchainBalance ?? user.balance;
+    // Sync balance from chain — applies the on-chain deposit delta to User.balance.
+    await balanceSyncService.syncUser(user);
+    const refreshed = await User.findById(user._id).select('balance');
+    const newBalance = refreshed?.balance ?? user.balance;
 
     // Record deposit to permanently block txHash replay
     await PendingDeposit.create({
@@ -372,9 +373,10 @@ const withdraw = async (req, res, next) => {
       return res.status(500).json({ success: false, error: err.message });
     }
 
-    // Sync balance from chain
-    const syncResult = await balanceSyncService.syncUser(user).catch(() => ({ onchainBalance: null }));
-    const newBalance = syncResult.onchainBalance ?? user.balance;
+    // Sync balance from chain — applies the on-chain withdrawal delta to User.balance.
+    await balanceSyncService.syncUser(user).catch(() => {});
+    const refreshed = await User.findById(user._id).select('balance');
+    const newBalance = refreshed?.balance ?? user.balance;
 
     // Update rate-limit counters
     await User.findByIdAndUpdate(user._id, windowExpired

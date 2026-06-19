@@ -53,7 +53,33 @@ app.use(helmet({
       scriptSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
-      connectSrc: ["'self'", process.env.GAMMA_API_URL || 'https://gamma-api.polymarket.com', process.env.CLOB_API_URL || 'https://clob.polymarket.com', 'https://polymarket.com'],
+      connectSrc: [
+        "'self'",
+        process.env.GAMMA_API_URL || 'https://gamma-api.polymarket.com',
+        process.env.CLOB_API_URL || 'https://clob.polymarket.com',
+        'https://polymarket.com',
+        // Blockchain RPC endpoints (Polygon mainnet only)
+        'https://polygon-bor-rpc.publicnode.com',
+        'https://polygon-rpc.com',
+        'https://rpc.ankr.com/polygon',
+        'https://polygon.llamarpc.com',
+        // Other chain RPCs for withdrawals (mainnet only)
+        'https://eth.llamarpc.com',
+        'https://ethereum-rpc.publicnode.com',
+        'https://mainnet.base.org',
+        'https://base-rpc.publicnode.com',
+        'https://arbitrum-one-rpc.publicnode.com',
+        'https://optimism-rpc.publicnode.com',
+        'https://avalanche-c-chain-rpc.publicnode.com',
+        // Bridge APIs
+        'https://app.across.to',
+        'https://api.relay.link',
+        'https://api.dln.trade',
+        'https://iris-api.circle.com',
+        // Solana
+        'https://api.mainnet-beta.solana.com',
+        'https://api.devnet.solana.com',
+      ],
       fontSrc: ["'self'", 'https:', 'data:'],
       objectSrc: ["'none'"],
       frameAncestors: ["'none'"],
@@ -63,18 +89,16 @@ app.use(helmet({
 }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
+const _devOrigins = process.env.NODE_ENV !== 'production'
+  ? ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000']
+  : [];
+
 const ALLOWED_ORIGINS = [
-  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()) : [
-    'http://localhost:5173',
-    'http://localhost:5174',
-    'http://localhost:3000',
-  ]),
-  // Production Vercel deployment
-  'https://predictme-live.vercel.app',
-  // Support both env var names (FRONTEND_URL or CLIENT_URL)
-  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL.replace(/\/$/, '')] : []),
-  ...(process.env.CLIENT_URL ? [process.env.CLIENT_URL.replace(/\/$/, '')] : []),
-];
+  ..._devOrigins,
+  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()) : []),
+  ...(process.env.FRONTEND_URL  ? [process.env.FRONTEND_URL.replace(/\/$/, '')]  : []),
+  ...(process.env.CLIENT_URL    ? [process.env.CLIENT_URL.replace(/\/$/, '')]    : []),
+].filter(Boolean);
 
 app.use(
   cors({
@@ -132,6 +156,8 @@ app.use('/api/onchain', require('./routes/onchain'));
 app.use('/api/relayer', require('./routes/relayer'));
 app.use('/api/clob', require('./routes/clob'));
 app.use('/api/payments', require('./routes/payments'));
+app.use('/api/crypto',  require('./routes/crypto'));
+app.use('/api/comments', require('./routes/comments'));
 
 // Serve uploaded files statically — relax CORP for cross-origin image embedding
 app.use('/uploads', helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }), express.static(path.join(__dirname, '../uploads')));
@@ -152,6 +178,7 @@ const depositWatcherService = require('./services/depositWatcherService');
 const { startBridgeCompletionPoller } = require('./services/sweepService');
 const priceAlertCron = require('./services/priceAlertCronService');
 const { startWithdrawalPoller } = require('./services/withdrawService');
+const marketStatusService = require('./services/marketStatusService');
 
 // Hourly cron job: snapshot all active market prices for transparent chart history
 const HOURLY_MS = 60 * 60 * 1000;
@@ -182,9 +209,9 @@ const RESOLVER_INTERVAL_MS = parseInt(
 async function runOperatorSelfCheck() {
   try {
     const { ethers } = require('ethers');
-    const { ADDRESSES, ABIS, RPC_URL, getOperatorKey } = require('./config/contracts');
+    const { ADDRESSES, ABIS, RPC_URL, getOperatorKey, getPolygonProvider } = require('./config/contracts');
 
-    const provider = new ethers.JsonRpcProvider(RPC_URL);
+    const provider = getPolygonProvider();
     const operatorKey = getOperatorKey();
     const operator = new ethers.Wallet(operatorKey, provider);
     const operatorAddress = operator.address;
@@ -200,8 +227,8 @@ async function runOperatorSelfCheck() {
     const hasMatic = maticBalance >= ethers.parseEther('0.1');
     console.log(`MATIC Balance: ${maticFormatted} ${hasMatic ? '✅' : '⚠️ LOW'}`);
 
-    // Check MockUSDC balance
-    const usdc = new ethers.Contract(ADDRESSES.MOCK_USDC, ABIS.MOCK_USDC, provider);
+    // Check USDC balance
+    const usdc = new ethers.Contract(ADDRESSES.USDC, ABIS.USDC, provider);
     const usdcBalance = await usdc.balanceOf(operatorAddress);
     const usdcFormatted = ethers.formatUnits(usdcBalance, 6);
     const hasUsdc = usdcBalance >= ethers.parseUnits('1000', 6);
@@ -281,13 +308,15 @@ connectDB()
   .then(async () => {
     startPriceSnapshotCron();
     startChainlinkResolutionCron();
+    // Start market status service (auto-close expired markets, Polymarket-style)
+    marketStatusService.startMarketStatusCron();
     // Start automated deposit indexer (if INDEXER_ENABLED=true)
     depositIndexer.start();
     // Start Polymarket market sync (if MARKET_SYNC_ENABLED=true)
     marketSyncService.start();
     // Start on-chain proxy balance sync job (Phase 3 — ONCHAIN_ENABLED required)
     balanceSyncService.startSyncJob();
-    // Start per-user proxy deposit watcher (Phase 3 — watches Amoy for USDC to proxy addresses)
+    // Start per-user proxy deposit watcher (Phase 3 — watches Polygon mainnet for USDC to proxy addresses)
     proxyDepositWatcher.start();
     // Start per-user HD-derived intake address watcher + bridge completion poller (M3 bridge)
     if (process.env.BRIDGE_WATCHER_ENABLED === 'true') {

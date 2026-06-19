@@ -30,10 +30,10 @@ const Modal = ({ isOpen, onClose, title, children, size = 'md', showClose = true
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className={`relative w-full ${widths[size] || widths.md} bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-2xl z-10`}
+            className={`relative w-full ${widths[size] || widths.md} bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-2xl z-10 max-h-[90vh] flex flex-col`}
           >
             {(title || showClose) && (
-              <div className="flex items-center justify-between p-5 border-b border-[var(--color-border)]">
+              <div className="flex items-center justify-between p-5 border-b border-[var(--color-border)] flex-shrink-0">
                 {title && <h2 className="text-lg font-semibold text-[var(--color-text)]">{title}</h2>}
                 {showClose && (
                   <button
@@ -45,7 +45,7 @@ const Modal = ({ isOpen, onClose, title, children, size = 'md', showClose = true
                 )}
               </div>
             )}
-            <div className="p-5">{children}</div>
+            <div className="p-5 overflow-y-auto">{children}</div>
           </motion.div>
         </div>
       )}

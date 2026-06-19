@@ -397,7 +397,10 @@ const moonpaySession = async (req, res, next) => {
 
     const user = req.user;
     const addresses = await ensureUserDepositAddresses(user);
-    const walletAddress = addresses.evm || process.env.EVM_DEPOSIT_ADDRESS;
+    const walletAddress = addresses.evm;
+    if (!walletAddress) {
+      return res.status(400).json({ success: false, error: 'No deposit address available. Please set up your wallet first.' });
+    }
 
     const externalTxId = `pb_${user._id}_${Date.now()}`;
 
