@@ -106,7 +106,7 @@ const UMA_CONFIG = {
   // https://docs.uma.xyz/resources/network-addresses → Polygon mainnet OO V2
   optimisticOracleV2: process.env.UMA_OO_V2_ADDRESS || '0xee3Afe347D5C74317041E2618C49534dAf887c24',
   // Native USDC is whitelisted as reward/collateral on UMA mainnet
-  rewardToken: process.env.UMA_REWARD_TOKEN_ADDRESS || process.env.USDC_ADDRESS || requiredEnv('MOCK_USDC_ADDRESS'),
+  rewardToken: process.env.UMA_REWARD_TOKEN_ADDRESS || process.env.USDC_ADDRESS || envOrWarn('MOCK_USDC_ADDRESS'),
   // Proposal bond must be >= UMA's finalFee for USDC (typically ~1500 USDC)
   minProposalBond: process.env.UMA_MIN_PROPOSAL_BOND || (1500 * 1e6).toString(),
   // Default liveness period (2 hours in seconds)
