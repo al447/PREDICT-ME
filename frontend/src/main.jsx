@@ -29,13 +29,24 @@ const persister = createSyncStoragePersister({
   key: 'PredictMe-query-cache',
 });
 
+// MoonPayProvider throws if apiKey is undefined, so only wrap when it is set.
+const moonPayApiKey = import.meta.env.VITE_MOONPAY_API_KEY;
+const withMoonPay = (children) =>
+  moonPayApiKey ? (
+    <MoonPayProvider
+      apiKey={moonPayApiKey}
+      environment={import.meta.env.VITE_MOONPAY_ENV === 'live' ? 'production' : 'sandbox'}
+    >
+      {children}
+    </MoonPayProvider>
+  ) : (
+    children
+  );
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID || 'placeholder'}>
-      <MoonPayProvider
-        apiKey={import.meta.env.VITE_MOONPAY_API_KEY}
-        environment={import.meta.env.VITE_MOONPAY_ENV === 'live' ? 'production' : 'sandbox'}
-      >
+      {withMoonPay(
         <PersistQueryClientProvider
           client={queryClient}
           persistOptions={{ persister, maxAge: 1000 * 60 * 60 * 24 }}
@@ -44,7 +55,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
             <App />
           </BrowserRouter>
         </PersistQueryClientProvider>
-      </MoonPayProvider>
+      )}
     </GoogleOAuthProvider>
   </React.StrictMode>
 );
